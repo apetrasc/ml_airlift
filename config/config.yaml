@@ -1,0 +1,14 @@
+# English comment: This YAML file contains all dataset paths for use in train.py and other scripts.
+
+hyperparameters:
+  learning_rate: 1.2e-3
+  num_epochs: 100
+  batch_size: 8
+  input_length: 2500
+dataset:
+  # Path to the training input data (x_train)
+  x_train: "/home/smatsubara/documents/airlift/data/simulation/dataset/x_train.npy"
+  # Path to the training target data (t_train)
+  t_train: "/home/smatsubara/documents/airlift/data/simulation/dataset/t_train.npy"
+  log_path: "/home/smatsubara/documents/airlift/data/logs"
+  weights_path: "/home/smatsubara/documents/airlift/data/weights"
