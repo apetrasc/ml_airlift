@@ -6,15 +6,15 @@ hyperparameters:
 dataset:
   x_train: /home/smatsubara/documents/airlift/data/simulation/dataset/x_train.npy
   t_train: /home/smatsubara/documents/airlift/data/simulation/dataset/t_train.npy
-  log_path: /home/smatsubara/documents/airlift/data/output/20250904/170139/logs
-  weights_path: /home/smatsubara/documents/airlift/data/output/20250904/170139/weights
+  log_path: /home/smatsubara/documents/airlift/data/logs
+  weights_path: /home/smatsubara/documents/airlift/data/weights
 training:
   device: cuda:1
 evaluation:
   target_variables_path: /home/smatsubara/documents/airlift/data/experiments/target_valiables.csv
   processed_dir: /home/smatsubara/documents/airlift/data/experiments/processed
-  save_csv_path: /home/smatsubara/documents/airlift/data/output/20250904/170139
-  save_path: /home/smatsubara/documents/airlift/data/output/20250904/170139/predicted.csv
+  save_csv_path: /home/smatsubara/documents/airlift/data/results
+  save_path: /home/smatsubara/documents/airlift/data/results/predicted.csv
   device: cuda:0
   tmp_path: /home/smatsubara/documents/airlift/data/tmp
-  results_path: /home/smatsubara/documents/airlift/data/output/20250904/170139
+  results_path: /home/smatsubara/documents/airlift/data/results

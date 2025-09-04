@@ -7,10 +7,12 @@ import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import TensorDataset, DataLoader,random_split
 import matplotlib.pyplot as plt
 import os
-with open('config/config.yaml', 'r') as f:
+
+
+with open('/home/smatsubara/documents/sandbox/ml_airlift/config/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
 x_train = np.load(config['dataset']['x_train'])
 t_train = np.load(config['dataset']['t_train'])
@@ -70,7 +72,6 @@ else:
 print(x_train_tensor_cnn.shape)
 print(t_train_tensor_cnn.shape)
 # Create TensorDataset and DataLoader
-from torch.utils.data import random_split
 
 dataset = TensorDataset(x_train_tensor_cnn, t_train_tensor_cnn)
 total_size = len(dataset)
@@ -90,11 +91,8 @@ model = SimpleCNN(size).to(device1)
 
 
 
-# English comment: Define a custom loss function as the sum of (target - prediction) / target
 def relative_sum_loss(pred, target):
-    # English comment: Take the logarithm of the loss to avoid instability due to very small values
     epsilon = 1e-7  # Avoid division by zero and log(0)
-    # 英語でコメント: Calculate the mean of the relative error instead of the sum
     loss = torch.mean(torch.abs(target - pred) / (target + epsilon))
     #loss = torch.log(torch.abs(loss) + epsilon)
     return loss
@@ -107,65 +105,85 @@ optimizer = optim.Adam(params=model.parameters(), lr=config['hyperparameters']['
 loss_history = []
 
 num_epochs = config['hyperparameters']['num_epochs']
+train_loss_history = []
+val_loss_history = []
+
 for epoch in range(num_epochs):
     model.train()
     running_loss = 0.0
+
+    l1_lambda = 1e-7  # L1 regularization strength
+    l2_lambda = 1e-6  # L2 regularization strength
     for batch_x, batch_y in train_dataloader:
         batch_x = batch_x.to(device1)
         batch_y = batch_y.to(device1)
         optimizer.zero_grad()
         outputs = model(batch_x)
         loss = criterion(outputs, batch_y)
+        # L1 regularization: sum of absolute values of all parameters
+        l1_norm = sum(p.abs().sum() for p in model.parameters())
+        # L2 regularization: sum of squared values of all parameters
+        l2_norm = sum(p.pow(2).sum() for p in model.parameters())
+        # Add L1 and L2 regularization to the loss
+        loss = loss + l1_lambda * l1_norm + l2_lambda * l2_norm
         loss.backward()
         optimizer.step()
         running_loss += loss.item() * batch_x.size(0)
     epoch_loss = running_loss / len(train_dataloader.dataset)
-    loss_history.append(epoch_loss)
+    train_loss_history.append(epoch_loss)
+
+    model.eval()
+    val_running_loss = 0.0
+    with torch.no_grad():
+        for val_x, val_y in val_dataloader:
+            val_x = val_x.to(device1)
+            val_y = val_y.to(device1)
+            val_outputs = model(val_x)
+            val_loss = criterion(val_outputs, val_y)
+            val_running_loss += val_loss.item() * val_x.size(0)
+    val_epoch_loss = val_running_loss / len(val_dataloader.dataset)
+    val_loss_history.append(val_epoch_loss)
+
     # Print loss every 100 epochs
     if (epoch + 1) % 100 == 0:
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss:.4f}")
-
-
+        print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {epoch_loss:.4f}, Val Loss: {val_epoch_loss:.4f}")
 
 save_weights_path = config['dataset']['weights_path']
 torch.save(model.state_dict(), os.path.join(save_weights_path, 'model.pth'))
 
 
-# Plot and save the learning curve (logarithmic loss)
 save_log_path = config['dataset']['log_path']
 plt.figure()
-plt.plot(range(1, num_epochs + 1), [np.log(l) for l in loss_history])
+plt.plot(range(1, num_epochs + 1), [np.log(l) for l in train_loss_history], label='Train Log(Loss)')
+plt.plot(range(1, num_epochs + 1), [np.log(l) for l in val_loss_history], label='Validation Log(Loss)')
 plt.title('Learning Curve (Log Loss)')
 plt.xlabel('Epoch')
 plt.ylabel('Log(Loss)')
 plt.grid(True)
+plt.legend()
 plt.savefig(os.path.join(save_log_path, 'learning_curve_log.png'))
 plt.close()
 
 plt.figure()
-plt.plot(range(1, num_epochs + 1), loss_history)
+plt.plot(range(1, num_epochs + 1), train_loss_history, label='Train Loss')
+plt.plot(range(1, num_epochs + 1), val_loss_history, label='Validation Loss')
 plt.title('Learning Curve (Loss)')
 plt.xlabel('Epoch')
 plt.ylabel('Loss')
 plt.grid(True)
+plt.legend()
 plt.savefig(os.path.join(save_log_path, 'learning_curve.png'))
 plt.close()
 
-import os
-from models import SimpleCNN
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-import os
-save_path="/home/smatsubara/documents/sandbox/psdata2matlab/tmp"
-model.load_state_dict(torch.load(os.path.join(save_path, 'model.pth')))
+load_path = config['dataset']['weights_path']
+model.load_state_dict(torch.load(os.path.join(load_path, 'model.pth')))
 model = model.to('cuda:0')
 model.eval()
 val_predictions = []
 val_targets = []
 with torch.no_grad():
     for val_x, val_y in val_dataloader:
-        # English comment: Send both val_x and val_y to cuda:0 for inference
+        
         val_x = val_x.to('cuda:0')
         val_y = val_y.to('cuda:0')
         outputs = model(val_x)
@@ -176,11 +194,6 @@ val_targets = torch.cat(val_targets, dim=0)
 print("Validation predictions shape:", val_predictions.shape)
 print("Validation targets shape:", val_targets.shape)
 print(val_predictions)
-# English comment: Plot the validation predictions and targets for comparison
-import matplotlib.pyplot as plt
-
-# English comment: Calculate the correlation coefficient between predicted and actual values
-import numpy as np
 
 # Convert tensors to numpy arrays
 val_targets_np = val_targets.numpy().flatten()
@@ -191,7 +204,7 @@ correlation_matrix = np.corrcoef(val_targets_np, val_predictions_np)
 correlation_coefficient = correlation_matrix[0, 1]
 print(f"Pearson correlation coefficient between predictions and actual values: {correlation_coefficient:.4f}")
 
-# English comment: Plot predicted values (y-axis) against actual values (x-axis) in the xy-plane, with both axes limited to the range [0, 1]
+
 plt.figure(figsize=(8, 8))
 plt.scatter(val_targets_np, val_predictions_np, alpha=0.6, marker='o', label='Predictions')
 plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
@@ -202,12 +215,9 @@ plt.xlim(0, 0.1)
 plt.ylim(0, 0.1)
 plt.legend()
 plt.grid(True)
-plt.savefig(os.path.join(save_path, 'val_pred_vs_actual_scatter.png'))
+plt.savefig(os.path.join(save_log_path, 'val_pred_vs_actual_scatter.png'))
+save_log_path = config['dataset']['log_path']
 plt.show()
-# English comment: Visualize the kernels (filters) of the first convolutional layer and compute Grad-CAM for a sample input
-
-# --- Visualize kernels of the first convolutional layer (Conv1d version) ---
-# English comment: Get the first Conv1d layer (assuming model has attribute 'conv1' or similar)
 first_conv1d = None
 for m in model.modules():
     if isinstance(m, torch.nn.Conv1d):
@@ -231,11 +241,10 @@ if first_conv1d is not None:
     plt.suptitle('First Conv1d Layer Kernels')
     plt.tight_layout()
     plt.show()
+    plt.savefig(os.path.join(save_log_path, 'kernels.png'))
 else:
     print("No Conv1d layer found in the model.")
 
-# --- Grad-CAM visualization for Conv1d ---
-# English comment: Define a simple Grad-CAM function for the last Conv1d layer
 class GradCAM1d:
     def __init__(self, model, target_layer):
         self.model = model
@@ -289,7 +298,6 @@ if target_layer_1d is not None:
     sample_input = val_x[0].unsqueeze(0).to('cuda:0')
     grad_cam_map = grad_cam_1d(sample_input)
     grad_cam_1d.remove_hooks()
-    # English comment: Plot the Grad-CAM heatmap (1D)
     plt.figure(figsize=(10, 4))
     plt.plot(grad_cam_map)
     plt.title('Grad-CAM Map for Sample Input (Conv1d)')
@@ -298,6 +306,7 @@ if target_layer_1d is not None:
     plt.grid(True)
     plt.tight_layout()
     plt.show()
+    plt.savefig(os.path.join(save_log_path, 'grad_cam_map.png'))
 else:
     print("No Conv1d layer found for Grad-CAM.")
 

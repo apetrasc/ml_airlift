@@ -12,7 +12,7 @@ class SimpleCNN(nn.Module):
         self.bn2 = nn.BatchNorm1d(4)
         self.relu2 = nn.ReLU()
         self.pool = nn.AdaptiveAvgPool1d(1)
-        self.fc = nn.Linear(4, 1)
+        self.fc = nn.Linear(4, 1,bias=True)
 
     def forward(self, x):
         # x: (batch, 1, length)

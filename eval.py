@@ -94,13 +94,9 @@ target_variables.select(cols_to_show).write_csv(save_path)
 print(f"Prediction results saved to {save_path}.")
 
 
-import polars as pl
-import numpy as np
-import matplotlib.pyplot as plt
-
 # Read the CSV file with UTF-8 (with BOM) encoding to prevent character corruption
 target_variables = pl.read_csv(
-    config['evaluation']['save_path'],
+    save_path,
     # encoding="SHIFT_JIS"
 )
 print(target_variables.head())
@@ -132,10 +128,10 @@ plt.xlabel("Solid Phase Volume Fraction")
 plt.ylabel("Mean")
 plt.xlim(0, 0.2)
 plt.ylim(0, 0.2)
-plt.title("Mean vs. Solid Phase Volume Fraction")
+plt.title("Predicted vs. Ground Truth")
 plt.grid(True)
 plt.tight_layout()
 plt.show()
-plt.savefig(os.path.join(save_results_path, 'mean_vs_solid_phase_volume_fraction.png'))
+plt.savefig(os.path.join(save_results_path, 'predicted_vs_ground_truth.png'))
 # Optionally, display the results
 # print(target_variables.select(cols_to_show))

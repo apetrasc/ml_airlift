@@ -26,15 +26,23 @@ target_variables = pl.read_csv(
     config['evaluation']['save_path'],
     # encoding="SHIFT_JIS"
 )
-print(target_variables.head())
+#print(target_variables.head())
 
 # Plot mean (y-axis) vs. solid phase volume fraction (x-axis)
 x = target_variables["固相体積率"].to_numpy()
 y = target_variables["mean"].to_numpy()
-# bias = 0.2 * np.ones(len(y))
-# y = y - bias
+if np.isnan(y).any():
+    print("nan")
+    
+    mask = ~np.isnan(y)
+    x = x[mask]
+    y = y[mask]
+    yerr = yerr[mask]
+print(f"min: {np.min(y)}")
+bias = np.min(y)* np.ones(len(y))
+#y = y - bias
 print(y)
-yerr = target_variables["var"].to_numpy() ** 0.5
+print(y.shape,x.shape, yerr.shape)
 
 #  Calculate the correlation coefficient between x and y
 # Remove any NaN values before calculation
@@ -48,15 +56,15 @@ if len(x_valid) > 1:
 else:
     print("Not enough valid data to calculate correlation coefficient.")
 save_results_path = config['evaluation']['results_path']
-plt.figure(figsize=(8, 6))
+plt.figure(figsize=(8, 8))
 plt.errorbar(x, y, yerr=yerr, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3)
 plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
-plt.xlabel("Solid Phase Volume Fraction")
-plt.ylabel("Mean")
-plt.xlim(-0.2, 0.2)
-plt.ylim(-0.2, 0.2)
-plt.title("Mean vs. Solid Phase Volume Fraction")
+plt.xlabel("Ground Truth")
+plt.ylabel("Predicted")
+plt.xlim(-0, 0.2)
+plt.ylim(-0, 0.2)
+plt.title("Predicted vs. Truth (Processed)")
 plt.grid(True)
 plt.tight_layout()
 plt.show()
-plt.savefig(os.path.join(save_results_path, 'mean_vs_solid_phase_volume_fraction.png'))
+plt.savefig(os.path.join(save_results_path, 'predicted_vs_truth_processed.png'))
