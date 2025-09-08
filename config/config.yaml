@@ -1,23 +1,26 @@
 hyperparameters:
-  learning_rate: 0.0012
-  num_epochs: 300
+  learning_rate: 0.001
+  num_epochs: 3000
   batch_size: 8
   input_length: 2500
+  seed: 23
+  l1_lambda: 1e-7
+  l2_lambda: 1e-6
 dataset:
   x_train: /home/smatsubara/documents/airlift/data/simulation/dataset/x_train.npy
   t_train: /home/smatsubara/documents/airlift/data/simulation/dataset/t_train.npy
   log_path: /home/smatsubara/documents/airlift/data/output/
-  weights_path: /home/smatsubara/documents/airlift/data/output/
+  weights_path: /home/smatsubara/documents/airlift/data/outputs/2025-09-05/16-42-25/weights/
 training:
   device: cuda:1
 evaluation:
   target_variables_path: /home/smatsubara/documents/airlift/data/experiments/target_valiables.csv
   processed_dir: /home/smatsubara/documents/airlift/data/experiments/processed
-  save_csv_path: /home/smatsubara/documents/airlift/data/output/
+  save_csv_path: /home/smatsubara/documents/airlift/data/outputs/
   device: cuda:0
   tmp_path: /home/smatsubara/documents/airlift/data/tmp
-  results_path: /home/smatsubara/documents/airlift/data/output/
+  results_path: /home/smatsubara/documents/airlift/data/outputs/
 
 hydra:
     run:
-        dir: /home/smatsubara/documents/airlift/data/outputs/${now:%Y-%m-%d_%H-%M-%S}
+        dir: /home/smatsubara/documents/airlift/data/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

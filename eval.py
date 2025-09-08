@@ -6,7 +6,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import yaml
-
+import math
+import argparse
 # Load configuration from YAML file
 with open('config/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
@@ -19,12 +20,20 @@ target_variables = pl.read_csv(
 
 # Load the trained model
 model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
-model.load_state_dict(torch.load(config['dataset']['weights_path'] + '/model.pth'))
+# You can use the argparse library to accept a command-line argument for base_dir (datetime).
+
+
+parser = argparse.ArgumentParser(description="Run evaluation with specified base directory (datetime).")
+parser.add_argument('--datetime', type=str, required=True, help='Base directory for evaluation (e.g., /home/smatsubara/documents/airlift/data/outputs/2025-09-07/14-39-46)')
+args = parser.parse_args()
+
+base_dir = args.datetime
+model_path = os.path.join(base_dir + '/weights/model.pth')
+model.load_state_dict(torch.load(model_path))
 model.eval()
 
 print(target_variables.head())
 
-output_folder_path = config['evaluation']['tmp_path']
 
 # If "IDXX" column exists, drop the "NAME" column (to avoid duplication)
 if "IDXX" in target_variables.columns:
@@ -88,8 +97,8 @@ target_variables = target_variables.with_columns([
 cols_to_show = [col for col in target_variables.columns[2:] if col not in ["NAME", "FullPath", "mean", "var"]] + ["NAME", "FullPath", "mean", "var"]
 
 # Save the results to a CSV file
-save_csv_path = config['evaluation']['save_csv_path']
-save_path = os.path.join(save_csv_path, "predicted.csv")
+
+save_path = os.path.join(base_dir, "predicted.csv")
 target_variables.select(cols_to_show).write_csv(save_path)
 print(f"Prediction results saved to {save_path}.")
 
@@ -104,25 +113,35 @@ print(target_variables.head())
 # Plot mean (y-axis) vs. solid phase volume fraction (x-axis)
 x = target_variables["固相体積率"].to_numpy()
 y = target_variables["mean"].to_numpy()
-# bias = 0.2 * np.ones(len(y))
-# y = y - bias
-print(y)
+
+
 yerr = target_variables["var"].to_numpy() ** 0.5
 
 #  Calculate the correlation coefficient between x and y
 # Remove any NaN values before calculation
-mask = ~np.isnan(x) & ~np.isnan(y)
+# x, y, yerr からNaNを除外した有効なデータのみを抽出
+mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(yerr)
 x_valid = x[mask]
 y_valid = y[mask]
+yerr_valid = yerr[mask]
+
+
+bias = np.min(y_valid) * np.ones(len(y_valid))
+c=(1/3*math.pi+math.sqrt(3)/2)/math.pi
+y_processed = (1/c)*(y_valid - bias)
+print(c)
+
+print(y_valid)
+print(np.min(y_processed))
 
 if len(x_valid) > 1:
     corr_coef = np.corrcoef(x_valid, y_valid)[0, 1]
     print(f"Correlation coefficient between x and y: {corr_coef:.4f}")
 else:
     print("Not enough valid data to calculate correlation coefficient.")
-save_results_path = config['evaluation']['results_path']
+
 plt.figure(figsize=(8, 6))
-plt.errorbar(x, y, yerr=yerr, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3)
+plt.errorbar(x_valid, y_valid, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3)
 plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
 plt.xlabel("Solid Phase Volume Fraction")
 plt.ylabel("Mean")
@@ -132,6 +151,18 @@ plt.title("Predicted vs. Ground Truth")
 plt.grid(True)
 plt.tight_layout()
 plt.show()
-plt.savefig(os.path.join(save_results_path, 'predicted_vs_ground_truth.png'))
+plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth.png'))
 # Optionally, display the results
 # print(target_variables.select(cols_to_show))
+plt.figure(figsize=(8, 8))
+plt.errorbar(x_valid, y_processed, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3)
+plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
+plt.xlabel("Ground Truth")
+plt.ylabel("Predicted")
+plt.xlim(-0, 0.2)
+plt.ylim(-0, 0.2)
+plt.title("Predicted vs. Truth (Processed)")
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+plt.savefig(os.path.join(base_dir, 'predicted_vs_truth_processed.png'))

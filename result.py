@@ -40,7 +40,7 @@ if np.isnan(y).any():
     yerr = yerr[mask]
 print(f"min: {np.min(y)}")
 bias = np.min(y)* np.ones(len(y))
-#y = y - bias
+y = y - bias
 print(y)
 print(y.shape,x.shape, yerr.shape)
 

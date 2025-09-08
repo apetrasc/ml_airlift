@@ -48,7 +48,7 @@ def main(cfg):
     for i in range(5):
         plot_x_train(x_train, i)
 
-    torch.manual_seed(23)
+    torch.manual_seed(cfg.hyperparameters.seed)
     device1 = torch.device(cfg.training.device)
 
     t_train_tensor = torch.from_numpy(t_train).float().to(device1)
@@ -86,7 +86,7 @@ def main(cfg):
         loss = torch.mean(torch.abs(target - pred) / (target + epsilon))
         return loss
 
-    criterion = nn.MSELoss()
+    criterion = nn.L1Loss()
     optimizer = optim.Adam(params=model.parameters(), lr=cfg.hyperparameters.learning_rate)
 
     loss_history = []
@@ -98,8 +98,8 @@ def main(cfg):
         model.train()
         running_loss = 0.0
 
-        l1_lambda = 1e-7
-        l2_lambda = 1e-6
+        l1_lambda = cfg.hyperparameters.l1_lambda
+        l2_lambda = cfg.hyperparameters.l2_lambda
         for batch_x, batch_y in train_dataloader:
             batch_x = batch_x.to(device1)
             batch_y = batch_y.to(device1)
