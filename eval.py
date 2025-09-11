@@ -140,7 +140,7 @@ if len(x_valid) > 1:
 else:
     print("Not enough valid data to calculate correlation coefficient.")
 
-plt.figure(figsize=(8, 6))
+plt.figure(figsize=(8, 8))
 plt.errorbar(x_valid, y_valid, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3)
 plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
 plt.xlabel("Solid Phase Volume Fraction")

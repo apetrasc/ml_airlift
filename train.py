@@ -86,7 +86,7 @@ def main(cfg):
         loss = torch.mean(torch.abs(target - pred) / (target + epsilon))
         return loss
 
-    criterion = nn.L1Loss()
+    criterion = nn.MSELoss()
     optimizer = optim.Adam(params=model.parameters(), lr=cfg.hyperparameters.learning_rate)
 
     loss_history = []
