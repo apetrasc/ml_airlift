@@ -7,10 +7,10 @@ import hydra
 import os
 import datetime
 from omegaconf import OmegaConf, DictConfig
-
-@hydra.main(config_path="/home/smatsubara/documents/sandbox/ml_airlift/config", config_name="config.yaml")
-def main(cfg: DictConfig):
-    print(cfg)
-
-if __name__ == "__main__":
-    main()
+from models import SimpleCNN
+from config import config
+# Todo: predict based on trained model
+config = OmegaConf.load('config/config.yaml')
+model = SimpleCNN(input_length=2500)
+model.load_state_dict(torch.load(config['evaluation']['weights_path'] + 'model.pth'))
+model.eval()

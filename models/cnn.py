@@ -4,11 +4,11 @@ class SimpleCNN(nn.Module):
     def __init__(self, input_length):
         super(SimpleCNN, self).__init__()
         self.conv1 = nn.Conv1d(1, 16, kernel_size=301, padding=151)
-        # English comment: Use BatchNorm1d for normalization after the first convolution
+        # Use BatchNorm1d for normalization after the first convolution
         self.bn1 = nn.BatchNorm1d(16)
         self.relu1 = nn.ReLU()
         self.conv2 = nn.Conv1d(16, 4, kernel_size=301, padding=151)
-        # English comment: Use BatchNorm1d for normalization after the second convolution
+        # Use BatchNorm1d for normalization after the second convolution
         self.bn2 = nn.BatchNorm1d(4)
         self.relu2 = nn.ReLU()
         self.pool = nn.AdaptiveAvgPool1d(1)

@@ -68,12 +68,12 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
     print(x_raw.shape)
     #npz2png(file_path=path,save_path=output_folder_path,full=False,pulse_index=1)
     #npz2png(file_path=path,save_path=output_folder_path,full=True,pulse_index=2)
-    print(f"max: {np.max(x_raw)}")
+    #print(f"max: {np.max(x_raw)}")
     #x_test = np.abs(hilbert(x_raw))
     x_raw_torch = torch.from_numpy(x_raw).float()
     x_raw_torch = x_raw_torch.to(device)
     x_test = hilbert_cuda(x_raw_torch,device)
-    print(f"max: {np.max(x_test)}")
+    #print(f"max: {np.max(x_test)}")
     if np.isnan(x_test).any():
         print("nan")
         x_test = np.nan_to_num(x_test)
@@ -84,7 +84,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
     print(x_test_tensor_all.shape)
     # Normalize each (length, channel) column for each sample in the batch
     max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]
-    print(f"max_values_per_column.shape: {max_values_per_column.shape}")
+    #print(f"max_values_per_column.shape: {max_values_per_column.shape}")
     max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
     x_test_tensor_all = x_test_tensor_all / max_values_per_column
     #print(f"max: {torch.max(x_test_tensor_all)}")
@@ -93,8 +93,9 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
     x_test_tensor_cnn = x_test_tensor_all[:, :, :]
     x_test_tensor_cnn = x_test_tensor_cnn.to(device)
     x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
+    #x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
     #print(x_test_tensor.shape)
-    print(x_test_tensor_cnn.shape)
+    #print(x_test_tensor_cnn.shape)
     print(f"max: {torch.max(x_test_tensor_cnn)}")
     #print(x_test_tensor_cnn)
     # Plot a sample signal
@@ -105,16 +106,16 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
     plt.ylabel("Value")
     plt.grid(True)
     plt.show()
-    print(x_test_tensor_cnn[plot_index,0,:].shape)
+    #print(x_test_tensor_cnn[plot_index,0,:].shape)
     # Model prediction
     model.eval()
     with torch.no_grad():
         x_test_tensor_cnn = x_test_tensor_cnn.to(device)
         predictions = model(x_test_tensor_cnn)
         mean, var = torch.mean(predictions), torch.var(predictions)
-        print(f"predictions.shape: {predictions.shape}")
-        print(predictions)
-        print(torch.mean(predictions), torch.var(predictions))
+        #print(f"predictions.shape: {predictions.shape}")
+        #print(predictions)
+        print(mean, var)
         # Release memory after computation
         del predictions
         torch.cuda.empty_cache()
