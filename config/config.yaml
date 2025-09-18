@@ -1,7 +1,7 @@
 hyperparameters:
   learning_rate: 0.001
   num_epochs: 1000
-  batch_size: 16
+  batch_size: 32
   input_length: 2500
   seed: 657
   l1_lambda: 1e-7

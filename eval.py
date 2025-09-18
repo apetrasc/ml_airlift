@@ -169,7 +169,7 @@ def calibration(x, y, yerr):
     """
     bias = np.min(y) * np.ones(len(y))
     c=(1/3*math.pi+math.sqrt(3)/2)/math.pi
-    y_processed = 5*(y - bias)
+    y_processed = 2*(y - bias)
     return y_processed
 
 y_valid_calibrated = calibration(x_valid, y_valid, yerr_valid)

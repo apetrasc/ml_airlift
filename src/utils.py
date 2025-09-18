@@ -96,7 +96,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
     #x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
     #print(x_test_tensor.shape)
     #print(x_test_tensor_cnn.shape)
-    print(f"max: {torch.max(x_test_tensor_cnn)}")
+    #print(f"max: {torch.max(x_test_tensor_cnn)}")
     #print(x_test_tensor_cnn)
     # Plot a sample signal
     plt.figure(figsize=(10, 4))
