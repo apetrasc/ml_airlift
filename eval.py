@@ -1,6 +1,6 @@
 import polars as pl
 from src import preprocess_and_predict
-from models import SimpleCNN
+from models import SimpleCNN, SimpleViTRegressor
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -20,6 +20,7 @@ target_variables = pl.read_csv(
 
 # Load the trained model
 model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+#model = SimpleViTRegressor(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 # You can use the argparse library to accept a command-line argument for base_dir (datetime).
 
 
@@ -182,40 +183,71 @@ else:
     print("Not enough valid data to calculate correlation coefficient.")
 
 plt.figure(figsize=(8, 8))
-# y_valid（全体）とy_valid_stone（石あり）を色分けして表示
-plt.errorbar(x_valid, y_valid, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3, label='All')
-# y_valid_stone用のx, y, yerrを抽出（is_str==1のインデックスを利用）
+plt.errorbar(
+    x_valid, y_valid, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3, label='All'
+)
 x_valid_stone, y_valid_stone_plot, yerr_valid_stone_plot = get_valid_data(x[is_str == 1], y_stone, yerr_stone)
-plt.errorbar(x_valid_stone, y_valid_stone_plot, yerr=yerr_valid_stone_plot, fmt='o', color='orange', alpha=0.7, ecolor='green', capsize=3, label='Stone')
-plt.legend()
+plt.errorbar(
+    x_valid_stone, y_valid_stone_plot, yerr=yerr_valid_stone_plot, fmt='o', color='orange', alpha=0.7, ecolor='green', capsize=3, label='Stone'
+)
+plt.legend(fontsize=18)
 plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
-plt.xlabel("Solid Phase Volume Fraction")
-plt.ylabel("Mean")
+plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
+plt.ylabel("Prediction(machine learning)", fontsize=18)
 plt.xlim(0, 0.2)
 plt.ylim(0, 0.2)
-plt.title("Predicted vs. Ground Truth")
+plt.title("Predicted vs. Ground Truth", fontsize=20)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
 plt.grid(True)
 plt.tight_layout()
 plt.show()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth.png'))
+
+
+x_valid_stone, y_valid_stone_plot, yerr_valid_stone_plot = get_valid_data(x[is_str == 1], y_stone, yerr_stone)
+
+plt.figure(figsize=(8, 8))
+#plt.errorbar(x_valid, y_valid, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3, label='All')
+plt.plot(x_valid, y_valid, 'o', color='blue', alpha=0.7, label='glass ball')
+#plt.errorbar(x_valid_stone, y_valid_stone_plot, yerr=yerr_valid_stone_plot, fmt='o', color='orange', alpha=0.7, ecolor='green', capsize=3, label='Stone')
+plt.plot(x_valid_stone, y_valid_stone_plot, 'o', color='orange', alpha=0.7, label='Stone')
+plt.legend(fontsize=18)
+plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
+plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
+plt.ylabel("Prediction(machine learning)", fontsize=18)
+plt.xlim(0, 0.2)
+plt.ylim(0, 0.2)
+plt.title("Predicted vs. Ground Truth", fontsize=20)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth_noerrorbars.png'))
+
 # Optionally, display the results
 # print(target_variables.select(cols_to_show))
 plt.figure(figsize=(8, 8))
 # y_valid_calibrated（全体）とy_valid_stone_calibrated（石あり）を色分けして表示
-plt.errorbar(x_valid, y_valid_calibrated, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3, label='All (calibrated)')
+plt.errorbar(x_valid, y_valid_calibrated, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3, label='glass ball (calibrated)')
 # y_valid_stone_calibrated用のx, y, yerrを抽出（is_str==1のインデックスを利用）
 x_valid_stone, y_valid_stone_plot, yerr_valid_stone_plot = get_valid_data(x[is_str == 1], y_stone, yerr_stone)
 y_valid_stone_calibrated = calibration(x_valid_stone, y_valid_stone_plot, yerr_valid_stone_plot)
 plt.errorbar(x_valid_stone, y_valid_stone_calibrated, yerr=yerr_valid_stone_plot, fmt='o', color='orange', alpha=0.7, ecolor='green', capsize=3, label='Stone (calibrated)')
 plt.legend()
 plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
-plt.xlabel("Ground Truth")
-plt.ylabel("Predicted")
+plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
+plt.ylabel("Prediction(machine learning)", fontsize=18)
 plt.xlim(-0, 0.2)
 plt.ylim(-0, 0.2)
-plt.title("Predicted vs. Truth (Processed)")
+plt.title("Predicted vs. Truth (Processed)", fontsize=20)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
 plt.grid(True)
 plt.tight_layout()
 plt.show()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_truth_processed.png'))
+
+
 

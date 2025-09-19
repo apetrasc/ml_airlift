@@ -66,7 +66,10 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
     # Load and preprocess data
     x_raw = np.load(path)["processed_data"][:,:,0]
     print(x_raw.shape)
-    print(f"loading successful and processing {path}..")
+    
+    import os
+    filename = os.path.basename(path)
+    print(f"loading successful and processing {filename}..")
     #npz2png(file_path=path,save_path=output_folder_path,full=False,pulse_index=1)
     #npz2png(file_path=path,save_path=output_folder_path,full=True,pulse_index=2)
     #print(f"max: {np.max(x_raw)}")
