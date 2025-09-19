@@ -66,6 +66,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
     # Load and preprocess data
     x_raw = np.load(path)["processed_data"][:,:,0]
     print(x_raw.shape)
+    print(f"loading successful and processing {path}..")
     #npz2png(file_path=path,save_path=output_folder_path,full=False,pulse_index=1)
     #npz2png(file_path=path,save_path=output_folder_path,full=True,pulse_index=2)
     #print(f"max: {np.max(x_raw)}")
@@ -81,7 +82,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
 
     # Add channel dimension: (batch, 1, length, channel)
     x_test_tensor_all = x_test_tensor.unsqueeze(1)
-    print(x_test_tensor_all.shape)
+    #print(x_test_tensor_all.shape)
     # Normalize each (length, channel) column for each sample in the batch
     max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]
     #print(f"max_values_per_column.shape: {max_values_per_column.shape}")
@@ -115,7 +116,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
         mean, var = torch.mean(predictions), torch.var(predictions)
         #print(f"predictions.shape: {predictions.shape}")
         #print(predictions)
-        print(mean, var)
+        print(f"mean: {mean}, var: {var}")
         # Release memory after computation
         del predictions
         torch.cuda.empty_cache()
