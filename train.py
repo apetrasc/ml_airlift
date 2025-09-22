@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import yaml
-from models import SimpleCNN, SimpleViTRegressor
+from models import SimpleCNN, SimpleViTRegressor, ResidualCNN
 import matplotlib.pyplot as plt
 import math
 import torch
@@ -70,7 +70,7 @@ def main(cfg):
 
     dataset = TensorDataset(x_train_tensor_cnn, t_train_tensor_cnn)
     total_size = len(dataset)
-    train_size = int(0.75 * total_size)
+    train_size = int(0.7 * total_size)
     val_size = total_size - train_size
 
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
@@ -79,8 +79,8 @@ def main(cfg):
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     size = cfg.hyperparameters.input_length
-    model = SimpleCNN(size).to(device1)
-    #model = SimpleViTRegressor(size).to(device1)
+    #model = SimpleCNN(size).to(device1)
+    model = SimpleViTRegressor(size).to(device1)
 
     def relative_sum_loss(pred, target):
         epsilon = 1e-7
@@ -191,8 +191,8 @@ def main(cfg):
     plt.title('Predicted vs Actual Values (Validation Set)')
     plt.xlabel('Actual Value')
     plt.ylabel('Predicted Value')
-    plt.xlim(0, 0.15)
-    plt.ylim(0, 0.15)
+    plt.xlim(0, 0.20)
+    plt.ylim(0, 0.20)
     plt.legend()
     plt.grid(True)
     plt.savefig(os.path.join(logs_dir, 'val_pred_vs_actual_scatter.png'))

@@ -1,4 +1,4 @@
-from .cnn import SimpleCNN
+from .cnn import SimpleCNN, ResidualCNN
 from .transformers import SimpleViTRegressor
     
-__all__ = ['SimpleCNN', 'SimpleViTRegressor']
+__all__ = ['SimpleCNN', 'SimpleViTRegressor', 'ResidualCNN']
