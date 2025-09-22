@@ -3,7 +3,7 @@ hyperparameters:
   num_epochs: 800
   batch_size: 16
   input_length: 2500
-  seed: 28
+  seed: 42
   l1_lambda: 1e-7
   l2_lambda: 1e-6
 dataset:
