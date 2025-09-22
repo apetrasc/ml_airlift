@@ -1,6 +1,6 @@
 import polars as pl
 from src import preprocess_and_predict
-from models import SimpleCNN, SimpleViTRegressor
+from models import SimpleCNN, SimpleViTRegressor, ResidualCNN
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -20,6 +20,7 @@ target_variables = pl.read_csv(
 
 # Load the trained model
 model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+#model = ResidualCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 #model = SimpleViTRegressor(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 # You can use the argparse library to accept a command-line argument for base_dir (datetime).
 
@@ -170,7 +171,7 @@ def calibration(x, y, yerr):
     """
     bias = np.min(y) * np.ones(len(y))
     c=(1/3*math.pi+math.sqrt(3)/2)/math.pi
-    y_processed = 2*(y - bias)
+    y_processed = y - bias
     return y_processed
 
 y_valid_calibrated = calibration(x_valid, y_valid, yerr_valid)
