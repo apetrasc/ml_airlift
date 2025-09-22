@@ -70,7 +70,7 @@ def main(cfg):
 
     dataset = TensorDataset(x_train_tensor_cnn, t_train_tensor_cnn)
     total_size = len(dataset)
-    train_size = int(0.80 * total_size)
+    train_size = int(0.7 * total_size)
     val_size = total_size - train_size
 
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
