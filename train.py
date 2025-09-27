@@ -79,8 +79,9 @@ def main(cfg):
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     size = cfg.hyperparameters.input_length
-    #model = SimpleCNN(size).to(device1)
-    model = SimpleViTRegressor(size).to(device1)
+    model = SimpleCNN(size).to(device1)
+    #model = ResidualCNN(size).to(device1)
+    #model = SimpleViTRegressor(size).to(device1)
 
     def relative_sum_loss(pred, target):
         epsilon = 1e-7

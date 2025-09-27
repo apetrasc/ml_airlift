@@ -1,6 +1,6 @@
 import polars as pl
 from src import preprocess_and_predict
-from models import SimpleCNN, SimpleViTRegressor, ResidualCNN
+from models import SimpleCNN, SimpleViTRegressor, ResidualCNN, BaseCNN
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -19,9 +19,10 @@ target_variables = pl.read_csv(
 )
 
 # Load the trained model
-model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+#model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 #model = ResidualCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 #model = SimpleViTRegressor(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+model = BaseCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 # You can use the argparse library to accept a command-line argument for base_dir (datetime).
 
 
@@ -75,7 +76,7 @@ for row in target_variables.iter_rows(named=True):
         print("DEBUG: File exists:", os.path.exists(file_path))
     if os.path.exists(file_path):
         try:
-            mean, var = preprocess_and_predict(file_path, model)
+            mean, var = preprocess_and_predict(file_path, model, device=config['evaluation']['device'])
             #mean_stone, var_stone = preprocess_and_predict(file_path_stone, model)
             mean_list.append(mean)
             var_list.append(var)
@@ -197,7 +198,7 @@ plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
 plt.ylabel("Prediction(machine learning)", fontsize=18)
 plt.xlim(0, 0.2)
 plt.ylim(0, 0.2)
-plt.title("Predicted vs. Ground Truth", fontsize=20)
+plt.title("Prediction vs. Ground Truth", fontsize=20)
 plt.xticks(fontsize=16)
 plt.yticks(fontsize=16)
 plt.grid(True)
@@ -219,13 +220,27 @@ plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
 plt.ylabel("Prediction(machine learning)", fontsize=18)
 plt.xlim(0, 0.2)
 plt.ylim(0, 0.2)
-plt.title("Predicted vs. Ground Truth", fontsize=20)
+plt.title("Prediction vs. Ground Truth", fontsize=20)
 plt.xticks(fontsize=16)
 plt.yticks(fontsize=16)
 plt.grid(True)
 plt.tight_layout()
 plt.show()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth_noerrorbars.png'))
+# Calculate RMSE (Root Mean Squared Error) and MAE (Mean Absolute Error) for x_valid and y_valid
+def calculate_rmse(y_true, y_pred):
+    # Compute Root Mean Squared Error
+    return np.sqrt(np.mean((y_true - y_pred) ** 2))
+
+def calculate_mae(y_true, y_pred):
+    # Compute Mean Absolute Error
+    return np.mean(np.abs(y_true - y_pred))
+
+rmse = calculate_rmse(x_valid, y_valid)
+mae = calculate_mae(x_valid, y_valid)
+
+print(f"RMSE between ground truth and prediction: {rmse:.6f}")
+print(f"MAE between ground truth and prediction: {mae:.6f}")
 
 # Optionally, display the results
 # print(target_variables.select(cols_to_show))
@@ -242,7 +257,7 @@ plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
 plt.ylabel("Prediction(machine learning)", fontsize=18)
 plt.xlim(-0, 0.2)
 plt.ylim(-0, 0.2)
-plt.title("Predicted vs. Truth (Processed)", fontsize=20)
+plt.title("Prediction vs. Truth (Processed)", fontsize=20)
 plt.xticks(fontsize=16)
 plt.yticks(fontsize=16)
 plt.grid(True)

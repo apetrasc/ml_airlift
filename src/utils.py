@@ -44,7 +44,7 @@ def hilbert_cuda(img_data_torch, device):
             img_data_torch_abs = torch.abs(analytic_signal)
             # Move to CPU and convert to numpy array
             return img_data_torch_abs.cpu().numpy()
-def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
+def preprocess_and_predict(path, model, device, plot_index=80):
     """
     Loads data from the given path, applies Hilbert transform and normalization,
     and runs prediction using the provided model.
