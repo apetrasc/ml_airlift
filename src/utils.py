@@ -3,7 +3,10 @@ import torch
 from scipy.signal import hilbert
 import matplotlib.pyplot as plt
 
-def hilbert_cuda(img_data_torch, device):
+def hilbert_cuda(img_data_torch, device, if_hilbert = True,
+                 low_filter_freq = 0,
+                 high_filter_freq = 1.0e9,
+                 fs = 52e6):
             """
             Compute the Hilbert envelope of input data using torch (GPU/CPU).
 
@@ -36,15 +39,32 @@ def hilbert_cuda(img_data_torch, device):
 
             # FFT along the time axis
             Xf = torch.fft.fft(img_data_torch, dim=1)
-            # Apply the Hilbert transformer
-            Xf = Xf * h
-            # IFFT to get the analytic signal
-            analytic_signal = torch.fft.ifft(Xf, dim=1)
-            # Take the amplitude envelope
-            img_data_torch_abs = torch.abs(analytic_signal)
-            # Move to CPU and convert to numpy array
-            return img_data_torch_abs.cpu().numpy()
-def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
+            low_filter_idx = 0.0
+            high_filter_idx = float("Inf")
+            low_filter_idx = int(low_filter_freq / fs * n_samples)
+            high_filter_idx = int(high_filter_freq /fs * n_samples)
+            if high_filter_idx > n_samples-1:
+                 high_filter_idx = n_samples-1
+            print(f'bandpass: {low_filter_idx}, {high_filter_idx}\n')
+            Xf[:,0:low_filter_idx] = 0
+            Xf[:,high_filter_idx:n_samples] = 0
+            if if_hilbert:
+                # Apply the Hilbert transformer
+                Xf = Xf * h
+                # IFFT to get the analytic signal
+                analytic_signal = torch.fft.ifft(Xf, dim=1)
+                # Take the amplitude envelope
+                img_data_torch_abs = torch.abs(analytic_signal)
+                # Move to CPU and convert to numpy array
+                return img_data_torch_abs.cpu().numpy()
+            else:
+                analytic_signal = torch.fft.ifft(Xf, dim=1)
+                return analytic_signal.cpu().numpy()
+
+def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
+                           filter_freq=[0, 1.0e9],
+                           rolling_window=False, window_size=20,
+                           window_stride=10, if_log1p=False, if_hilbert=True):
     """
     Loads data from the given path, applies Hilbert transform and normalization,
     and runs prediction using the provided model.
@@ -62,9 +82,11 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
     import torch
     from scipy.signal import hilbert
     import matplotlib.pyplot as plt
+    import polars as pl
 
     # Load and preprocess data
     x_raw = np.load(path)["processed_data"][:,:,0]
+    fs = np.load(path)["fs"]
     print(x_raw.shape)
     
     import os
@@ -76,8 +98,24 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
     #x_test = np.abs(hilbert(x_raw))
     x_raw_torch = torch.from_numpy(x_raw).float()
     x_raw_torch = x_raw_torch.to(device)
-    x_test = hilbert_cuda(x_raw_torch,device)
-    #print(f"max: {np.max(x_test)}")
+    min_freq = filter_freq[0]
+    max_freq = filter_freq[1]
+
+    x_test = hilbert_cuda(x_raw_torch,device, if_hilbert,
+                              min_freq, max_freq, fs)
+    x_test_tmp = []
+    if rolling_window:
+        for x_pulse in x_test:
+            s =pl.Series(x_pulse)
+
+            rolling_max = s.rolling_max(window_size=window_size).gather_every(
+                 n=window_stride, offset=0
+            )
+            x_pulse = rolling_max[2:].to_numpy()
+            x_test_tmp.append(x_pulse)
+        x_test = np.array(x_test_tmp)
+        print('ここまでOK')
+    print(f"max: {np.max(x_test[10])}")
     if np.isnan(x_test).any():
         print("nan")
         x_test = np.nan_to_num(x_test)
@@ -85,6 +123,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
 
     # Add channel dimension: (batch, 1, length, channel)
     x_test_tensor_all = x_test_tensor.unsqueeze(1)
+    print('ここまでOK')
     #print(x_test_tensor_all.shape)
     # Normalize each (length, channel) column for each sample in the batch
     max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]
@@ -96,7 +135,8 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
     # Use only the first channel for CNN input
     x_test_tensor_cnn = x_test_tensor_all[:, :, :]
     x_test_tensor_cnn = x_test_tensor_cnn.to(device)
-    x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
+    if if_log1p:
+        x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
     #x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
     #print(x_test_tensor.shape)
     #print(x_test_tensor_cnn.shape)
