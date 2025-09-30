@@ -183,6 +183,8 @@ def main(cfg):
     correlation_matrix = np.corrcoef(val_targets_np, val_predictions_np)
     correlation_coefficient = correlation_matrix[0, 1]
     print(f"Pearson correlation coefficient between predictions and actual values: {correlation_coefficient:.4f}")
+    relative_error = relative_sum_loss(val_predictions, val_targets)
+    print(f'Relative Error(RE): {relative_error}')
 
     plt.figure(figsize=(8, 8))
     plt.scatter(val_targets_np, val_predictions_np, alpha=0.6, marker='o', label='Predictions')
@@ -190,8 +192,8 @@ def main(cfg):
     plt.title('Predicted vs Actual Values (Validation Set)')
     plt.xlabel('Actual Value')
     plt.ylabel('Predicted Value')
-    plt.xlim(0, 0.2)
-    plt.ylim(0, 0.2     )
+    plt.xlim(-0.2, 0.2)
+    plt.ylim(-0.2, 0.2)
     plt.legend()
     plt.grid(True)
     plt.savefig(os.path.join(logs_dir, 'val_pred_vs_actual_scatter.png'))

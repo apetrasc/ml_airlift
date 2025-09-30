@@ -108,14 +108,16 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
         for x_pulse in x_test:
             s =pl.Series(x_pulse)
 
-            rolling_max = s.rolling_max(window_size=window_size).gather_every(
+            rolling_max = s.rolling_max(window_size=window_size)[
+                 window_size-1:].gather_every(
                  n=window_stride, offset=0
             )
-            x_pulse = rolling_max[2:].to_numpy()
+            x_pulse = rolling_max.to_numpy()
             x_test_tmp.append(x_pulse)
         x_test = np.array(x_test_tmp)
         print('ここまでOK')
     print(f"max: {np.max(x_test[10])}")
+    print(f'xtest shap: {x_test.shape}')
     if np.isnan(x_test).any():
         print("nan")
         x_test = np.nan_to_num(x_test)
