@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import yaml
-from models import SimpleCNN, SimpleViTRegressor, ResidualCNN
+from models import SimpleCNN, SimpleViTRegressor, ResidualCNN, ProposedCNN
 import matplotlib.pyplot as plt
 import math
 import torch
@@ -10,7 +10,7 @@ import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader,random_split
 import matplotlib.pyplot as plt
 import os
-
+from src import npz2png
 
 import hydra
 from omegaconf import OmegaConf
@@ -20,7 +20,8 @@ def main(cfg):
 
     # Get hydra run directory as base path
     base_dir = os.getcwd()
-
+    logs_dir = os.path.join(base_dir, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
     # Load config (already loaded as cfg)
     x_train = np.load(os.path.relpath(cfg.dataset.x_train, base_dir))
     t_train = np.load(os.path.relpath(cfg.dataset.t_train, base_dir))
@@ -35,18 +36,7 @@ def main(cfg):
     print(x_train_tensor.shape)
     print(t_train_tensor.shape)
 
-    def plot_x_train(x_train, index):
-        plt.figure(figsize=(10, 4))
-        plt.plot(x_train[index], label="Sample 0")
-        plt.xlabel("Sample Index")
-        plt.ylabel("Amplitude")
-        plt.title("Visualization of One x_train Sample")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
-    for i in range(5):
-        plot_x_train(x_train, i)
+    
 
     torch.manual_seed(cfg.hyperparameters.seed)
     device1 = torch.device(cfg.training.device)
@@ -70,7 +60,7 @@ def main(cfg):
 
     dataset = TensorDataset(x_train_tensor_cnn, t_train_tensor_cnn)
     total_size = len(dataset)
-    train_size = int(0.7 * total_size)
+    train_size = int(0.75 * total_size)
     val_size = total_size - train_size
 
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
@@ -79,7 +69,8 @@ def main(cfg):
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     size = cfg.hyperparameters.input_length
-    model = SimpleCNN(size).to(device1)
+    #model = SimpleCNN(size).to(device1)
+    model = ProposedCNN(size).to(device1)
     #model = ResidualCNN(size).to(device1)
     #model = SimpleViTRegressor(size).to(device1)
 
@@ -133,7 +124,7 @@ def main(cfg):
             print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {epoch_loss:.4f}, Val Loss: {val_epoch_loss:.4f}")
 
     weights_dir = os.path.join(base_dir, "weights")
-    logs_dir = os.path.join(base_dir, "logs")
+    
     os.makedirs(weights_dir, exist_ok=True)
     os.makedirs(logs_dir, exist_ok=True)
 

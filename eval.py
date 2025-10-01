@@ -1,6 +1,6 @@
 import polars as pl
 from src import preprocess_and_predict
-from models import SimpleCNN, SimpleViTRegressor, ResidualCNN, BaseCNN
+from models import SimpleCNN, SimpleViTRegressor, ResidualCNN, BaseCNN, ProposedCNN
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -22,7 +22,8 @@ target_variables = pl.read_csv(
 #model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 #model = ResidualCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 #model = SimpleViTRegressor(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
-model = BaseCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+#model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+model = ProposedCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 # You can use the argparse library to accept a command-line argument for base_dir (datetime).
 
 
@@ -179,7 +180,7 @@ y_valid_calibrated = calibration(x_valid, y_valid, yerr_valid)
 # y_valid_stone_calibrated = calibration(x_valid_stone, y_valid_stone, yerr_valid_stone)
 
 if len(x_valid) > 1:
-    corr_coef = np.corrcoef(x_valid, y_valid_calibrated)[0, 1]
+    corr_coef = np.corrcoef(x_valid, y_valid)[0, 1]
     print(f"Correlation coefficient between x and y: {corr_coef:.4f}")
 else:
     print("Not enough valid data to calculate correlation coefficient.")

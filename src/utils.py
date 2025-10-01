@@ -65,7 +65,7 @@ def preprocess_and_predict(path, model, device, plot_index=80):
 
     # Load and preprocess data
     x_raw = np.load(path)["processed_data"][:,:,0]
-    print(x_raw.shape)
+    #print(x_raw.shape)
     
     import os
     filename = os.path.basename(path)
@@ -97,19 +97,23 @@ def preprocess_and_predict(path, model, device, plot_index=80):
     x_test_tensor_cnn = x_test_tensor_all[:, :, :]
     x_test_tensor_cnn = x_test_tensor_cnn.to(device)
     x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
+    #print("log1p done")
+    max_values_per_column = torch.max(x_test_tensor_cnn, dim=2, keepdim=True)[0]
+    max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
+    x_test_tensor_cnn = x_test_tensor_cnn / max_values_per_column
     #x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
     #print(x_test_tensor.shape)
     #print(x_test_tensor_cnn.shape)
-    #print(f"max: {torch.max(x_test_tensor_cnn)}")
+    print(f"max: {torch.max(x_test_tensor_cnn)}")
     #print(x_test_tensor_cnn)
     # Plot a sample signal
-    plt.figure(figsize=(10, 4))
-    plt.plot(x_test_tensor_cnn[5, 0,:].cpu().numpy())
-    plt.title("x_test_tensor_cnn Signal")
-    plt.xlabel("sample Index")
-    plt.ylabel("Value")
-    plt.grid(True)
-    plt.show()
+    # plt.figure(figsize=(10, 4))
+    # plt.plot(x_test_tensor_cnn[5, 0,:].cpu().numpy())
+    # plt.title("x_test_tensor_cnn Signal")
+    # plt.xlabel("sample Index")
+    # plt.ylabel("Value")
+    # plt.grid(True)
+    # plt.show()
     #print(x_test_tensor_cnn[plot_index,0,:].shape)
     # Model prediction
     model.eval()
@@ -124,3 +128,145 @@ def preprocess_and_predict(path, model, device, plot_index=80):
         del predictions
         torch.cuda.empty_cache()
     return mean, var
+
+def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=None, full=True, pulse_index=0):    
+    """
+    Convert processed .npz signal data to PNG image.
+    
+    Parameters
+    ----------
+    file_path : str
+        Path to the .npz file containing processed data.
+    save_path : str
+        Path to save the output PNG image.
+    channel_index : int, optional
+        Index of the channel to visualize (default is 0).
+    start_time : float, optional
+        Start time in seconds for visualization (default is 0.0).
+    end_time : float or None, optional
+        End time in seconds for visualization (default is None, meaning till the end).
+    full : bool, optional
+        If True, visualize all pulses as an image. If False, visualize only one pulse waveform (default is True).
+    pulse_index : int, optional
+        Index of the pulse to visualize when full=False (default is 0).
+    
+    Returns
+    -------
+    None
+    """
+    # .npzファイルからデータを読み込む
+    data = np.load(file_path)
+    processed_data = data["processed_data"]
+    fs = data["fs"].item() if hasattr(data["fs"], "item") else float(data["fs"])
+    #print(f"processed_data.shape:{processed_data.shape}")
+    # full=Trueの場合は全パルスを画像化
+    if full:
+        # processed_dataのshape: (n_pulses, n_samples, n_channels)
+        # 指定チャンネルの全パルスを抽出
+        if processed_data.ndim == 3:
+            # Check if the channel_index is within the valid range
+            if channel_index < 0 or channel_index >= processed_data.shape[2]:
+                raise IndexError(f"channel_index {channel_index} is out of bounds for axis 2 with size {processed_data.shape[2]}")
+            img_data = processed_data[:, :, channel_index]
+        elif processed_data.ndim == 2:
+            img_data = processed_data  # (n_pulses, n_samples)
+        # If processed_data has other dimensions, raise an error
+        else:
+            raise ValueError("processed_data shape is not supported.")
+        
+        # Determine the time axis range
+        n_samples = img_data.shape[1]
+        t = np.arange(n_samples) / fs
+        if end_time is None:
+            end_time = t[-1]
+        start_idx = int(start_time * fs)
+        end_idx = int(end_time * fs)
+        if end_idx > n_samples:
+            end_idx = n_samples
+        img_data = img_data[:, start_idx:end_idx]
+        # Apply Hilbert transform to each pulse in img_data along the time axis
+        # The analytic signal is computed for each pulse (row) individually
+        # ヒルベルト変換をtorchで実装する
+        import torch
+
+        neglegible_time = 3e-6
+        zero_samples = int(neglegible_time * fs)
+
+        # img_data: (n_pulses, n_samples)
+        # GPUにデータを転送
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        img_data_torch = torch.from_numpy(img_data).float().to(device)
+        #print(f"device: {device}")
+        # 初期部分を0にする
+        if zero_samples > 0:
+            img_data_torch[:, :zero_samples] = 0
+
+        # ヒルベルト変換のためのハイライザー（周波数領域での乗数）を作成
+        n_samples = img_data_torch.shape[1]
+
+        img_data = hilbert_cuda(img_data_torch, device)
+        #print(img_data.shape)
+        t = t[start_idx:end_idx]
+        #print(t.shape)
+        #print(np.max(img_data),np.min(img_data))
+        
+        
+        plt.figure(figsize=(10, 4))
+        #plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0]*1e6, t[-1]*1e6, img_data.shape[0]-0.5, -0.5],vmin=0,vmax=1)
+        plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0]*1e6, t[-1]*1e6, img_data.shape[0]-0.5, -0.5])
+        #plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0], t[-1], img_data.shape[0]-0.5, -0.5])
+        plt.colorbar(label='Amplitude')
+        plt.xlabel('Time (μs)')
+        plt.ylabel('Pulse Number')
+        plt.title('All Pulses (Channel {})'.format(channel_index))
+        plt.tight_layout()
+        import os
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        new_save_path = os.path.join(save_path, f"{base_name}_{channel_index}img.png")
+        print(new_save_path)
+        plt.savefig(new_save_path)
+        plt.close()
+    else:
+        # full=Falseの場合は指定パルスのみをプロット
+        if processed_data.ndim == 3:
+            pulse = processed_data[pulse_index, :, channel_index]
+           
+        elif processed_data.ndim == 2:
+            pulse = processed_data[pulse_index, :]
+        else:
+            raise ValueError("processed_data shape is not supported.")
+        n_samples = len(pulse)
+        t = np.arange(n_samples) / fs
+        if end_time is None:
+            end_time = t[-1]
+        start_idx = int(start_time * fs)
+        end_idx = int(end_time * fs)
+        if end_idx > n_samples:
+            end_idx = n_samples
+        t = t[start_idx:end_idx]
+        pulse = pulse[start_idx:end_idx]
+        # Apply Hilbert transform to the pulse to obtain its analytic signal
+        # The absolute value of the analytic signal gives the envelope of the pulse
+        from scipy.signal import hilbert
+        neglegible_time = 3e-6 # 3μs
+        zero_samples = int(neglegible_time * fs)
+        pulse[:zero_samples] = 0
+        analytic_pulse = np.abs(hilbert(pulse))
+        #analytic_pulse = np.log1p(analytic_pulse)
+        #print(pulse) 
+        plt.figure(figsize=(10, 4))
+        plt.plot(t*1e6, analytic_pulse, color='red', label='Envelope')
+        plt.plot(t*1e6, pulse, color='blue', label='Original Pulse')
+        plt.legend()
+        plt.xlabel('Time (μs)')
+        plt.ylabel('Amplitude')
+        plt.title('Pulse {} (Channel {})'.format(pulse_index, channel_index))
+        plt.tight_layout()
+        import os
+        #base = os.path.dirname(save_path)
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        channel=channel_index
+        new_save_path = os.path.join(save_path, f"{base_name}_{channel}pulse.png")
+        print(new_save_path)
+        plt.savefig(new_save_path)
+        plt.close()

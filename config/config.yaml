@@ -3,9 +3,9 @@ hyperparameters:
   num_epochs: 800
   batch_size: 16
   input_length: 2500
-  seed: 28
-  l1_lambda: 1e-7
-  l2_lambda: 1e-6
+  seed: 92
+  l1_lambda: 1.0e-7
+  l2_lambda: 1.0e-7
 dataset:
   x_train: /home/smatsubara/documents/airlift/data/simulation/dataset/x_train.npy
   t_train: /home/smatsubara/documents/airlift/data/simulation/dataset/t_train.npy
