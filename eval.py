@@ -62,7 +62,13 @@ if if_rolling:
 
 base_dir = args.datetime
 model_path = os.path.join(base_dir + '/weights/model.pth')
-model.load_state_dict(torch.load(model_path))
+model.load_state_dict(
+    torch.load(
+        model_path,
+        map_location=config['evaluation']['device'],
+        weights_only=True,
+    )
+)
 model.eval()
 
 print(target_variables.head())
@@ -189,8 +195,30 @@ plt.ylim(0, 0.2)
 plt.title("Predicted vs. Ground Truth")
 plt.grid(True)
 plt.tight_layout()
-plt.show()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth.png'))
+plt.close()
+
+
+x_valid_stone, y_valid_stone_plot, yerr_valid_stone_plot = get_valid_data(x[is_str == 1], y_stone, yerr_stone)
+
+plt.figure(figsize=(8, 8))
+#plt.errorbar(x_valid, y_valid, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3, label='All')
+plt.plot(x_valid, y_valid, 'o', color='blue', alpha=0.7, label='glass ball')
+#plt.errorbar(x_valid_stone, y_valid_stone_plot, yerr=yerr_valid_stone_plot, fmt='o', color='orange', alpha=0.7, ecolor='green', capsize=3, label='Stone')
+plt.plot(x_valid_stone, y_valid_stone_plot, 'o', color='orange', alpha=0.7, label='Stone')
+plt.legend(fontsize=18)
+plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
+plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
+plt.ylabel("Prediction(machine learning)", fontsize=18)
+plt.xlim(0, 0.2)
+plt.ylim(0, 0.2)
+plt.title("Predicted vs. Ground Truth", fontsize=20)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
+plt.grid(True)
+plt.tight_layout()
+plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth_noerrorbars.png'))
+plt.close()
 # Optionally, display the results
 # print(target_variables.select(cols_to_show))
 plt.figure(figsize=(8, 8))
@@ -203,5 +231,7 @@ plt.ylim(-0, 0.2)
 plt.title("Predicted vs. Truth (Processed)")
 plt.grid(True)
 plt.tight_layout()
-plt.show()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_truth_processed.png'))
+plt.close()
+print("saved all figures")
+
