@@ -109,7 +109,8 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0'):
     plt.xlabel("sample Index")
     plt.ylabel("Value")
     plt.grid(True)
-    plt.show()
+    #plt.show()
+    plt.close()
     #print(x_test_tensor_cnn[plot_index,0,:].shape)
     # Model prediction
     model.eval()
