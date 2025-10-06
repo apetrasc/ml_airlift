@@ -105,7 +105,8 @@ for row in target_variables.iter_rows(named=True):
                                                rolling_window=if_rolling,
                                                window_size=window_size,
                                                window_stride=window_stride,
-                                               if_hilbert=if_hilbert)
+                                               if_hilbert=if_hilbert,
+                                               if_log1p = if_log1p)
             mean_list.append(mean)
             var_list.append(var)
         except Exception as e:

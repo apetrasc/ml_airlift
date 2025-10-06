@@ -80,7 +80,8 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
     """
     import numpy as np
     import torch
-    from scipy.signal import hilbert
+    import scipy.signal 
+    import hilbert
     import matplotlib.pyplot as plt
     import polars as pl
 

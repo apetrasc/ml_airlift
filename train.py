@@ -93,6 +93,7 @@ def main(cfg):
     num_epochs = cfg.hyperparameters.num_epochs
     train_loss_history = []
     val_loss_history = []
+    val_best_loss = 100
 
     for epoch in range(num_epochs):
         model.train()

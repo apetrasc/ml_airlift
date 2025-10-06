@@ -1,10 +1,10 @@
 hyperparameters:
-  learning_rate: 0.0001
+  learning_rate: 0.001
   num_epochs: 600
   batch_size: 16
   input_length: 2500
   seed: 54
-  l1_lambda: 2e-7
+  l1_lambda: 1e-7
   l2_lambda: 1e-7
 dataset:
   x_train: /mnt/sdb/yyamaguchi/psdata2matlab/simulation2d/dataset/x_train.npy
