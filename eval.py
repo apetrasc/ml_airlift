@@ -1,5 +1,5 @@
 import polars as pl
-from src import preprocess_and_predict
+from src import preprocess_and_predict, preprocess, debug_pipeline
 from models import SimpleCNN, SimpleViTRegressor, ResidualCNN, BaseCNN, ProposedCNN
 import torch
 import numpy as np
@@ -22,8 +22,9 @@ target_variables = pl.read_csv(
 #model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 #model = ResidualCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 #model = SimpleViTRegressor(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
-#model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
-model = ProposedCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+#model = ProposedCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+#model = BaseCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 # You can use the argparse library to accept a command-line argument for base_dir (datetime).
 
 
@@ -72,13 +73,15 @@ for row in target_variables.iter_rows(named=True):
     file_path = row["FullPath"]
     #file_path_stone = row["FullPathStone"]
     # Debug: Check if the file path is exactly as expected
-    if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/P20241015-1037_processed.npz":
-        print("DEBUG: File path matches exactly:", file_path)
-        print("DEBUG: File exists:", os.path.exists(file_path))
+    
+    
     if os.path.exists(file_path):
+        if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20241011-1015_processed.npz":
+            debug_pipeline(base_dir, 'config/config.yaml', file_path)
+        if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20240726-1600_processed.npz":
+            debug_pipeline(base_dir, 'config/config.yaml', file_path)
         try:
             mean, var = preprocess_and_predict(file_path, model, device=config['evaluation']['device'])
-            #mean_stone, var_stone = preprocess_and_predict(file_path_stone, model)
             mean_list.append(mean)
             var_list.append(var)
             # mean_list_stone.append(mean_stone)

@@ -55,17 +55,17 @@ class ResidualCNN(nn.Module):
 class SimpleCNN(nn.Module):
     def __init__(self, input_length):
         super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv1d(1, 16, kernel_size=101, padding=50)
-        self.bn1 = nn.BatchNorm1d(16)
+        self.conv1 = nn.Conv1d(1, 32, kernel_size=201, padding=100)
+        self.bn1 = nn.BatchNorm1d(32)
         self.relu1 = nn.ReLU()
-        self.conv2 = nn.Conv1d(16, 4, kernel_size=101, padding=50)
+        self.conv2 = nn.Conv1d(32, 4, kernel_size=201, padding=101)
         self.bn2 = nn.BatchNorm1d(4)
         self.relu2 = nn.ReLU()
         self.pool = nn.AdaptiveAvgPool1d(1)
         self.fc = nn.Linear(4, 1) 
         self.dropout = nn.Dropout(0.1)
-        self.ln1 = nn.LayerNorm([16, input_length])
-        self.ln2 = nn.LayerNorm([4, input_length])
+        self.ln1 = nn.LayerNorm([32, input_length])
+        self.ln2 = nn.LayerNorm([4, input_length+2])
     def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
@@ -84,13 +84,15 @@ class SimpleCNN(nn.Module):
 class BaseCNN(nn.Module):
     def __init__(self, input_length):
         super(BaseCNN, self).__init__()
-        self.conv1 = nn.Conv1d(1, 16, kernel_size=201, padding=11)
+        self.conv1 = nn.Conv1d(1, 16, kernel_size=14, padding=7,bias=False)
         # Use BatchNorm1d for normalization after the first convolution
         self.bn1 = nn.BatchNorm1d(16)
+        self.ln1 = nn.LayerNorm([16, input_length+1])
         self.relu1 = nn.ReLU()
-        self.conv2 = nn.Conv1d(16, 4, kernel_size=201, padding=101)
+        self.conv2 = nn.Conv1d(16, 4, kernel_size=14, padding=7,bias=False)
         # Use BatchNorm1d for normalization after the second convolution
         self.bn2 = nn.BatchNorm1d(4)
+        self.ln2 = nn.LayerNorm([4, input_length+1])
         self.relu2 = nn.ReLU()
         self.pool = nn.AdaptiveAvgPool1d(1)
         self.fc = nn.Linear(4, 1)
@@ -99,6 +101,7 @@ class BaseCNN(nn.Module):
         # x: (batch, 1, length)
         x = self.conv1(x)
         x = self.bn1(x)  # Apply batch normalization after the first convolution
+        x = self.ln1(x)
         x = self.relu1(x)
         x = self.conv2(x)
         x = self.bn2(x)  # Apply batch normalization after the second convolution
@@ -160,8 +163,8 @@ class ProposedCNN(nn.Module):
         x = self.gap(x).view(x.size(0), -1)
         x = self.head(x)
         # Constrain to [0,1] then scale to [y_min, y_max]
-        x = self.act(x)
-        x = self.y_min + (self.y_max - self.y_min) * x
+        #x = self.act(x)
+        #x = self.y_min + (self.y_max - self.y_min) * x
         return x.squeeze(1)
 
 class VGG11_1D(nn.Module):

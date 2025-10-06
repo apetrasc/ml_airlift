@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import yaml
-from models import SimpleCNN, SimpleViTRegressor, ResidualCNN, ProposedCNN
+from models import SimpleCNN, SimpleViTRegressor, ResidualCNN, ProposedCNN, BaseCNN
 import matplotlib.pyplot as plt
 import math
 import torch
@@ -11,6 +11,7 @@ from torch.utils.data import TensorDataset, DataLoader,random_split
 import matplotlib.pyplot as plt
 import os
 from src import npz2png
+from torch.nn import init
 
 import hydra
 from omegaconf import OmegaConf
@@ -35,7 +36,11 @@ def main(cfg):
     print(torch.max(x_train_tensor))
     print(x_train_tensor.shape)
     print(t_train_tensor.shape)
-
+    plt.figure(figsize=(10, 4))
+    plt.ylim(0, 1)
+    plt.plot(x_train_tensor[30, :])
+    plt.savefig(os.path.join(logs_dir, 'x_train_tensor.png'))
+    plt.close()
     
 
     torch.manual_seed(cfg.hyperparameters.seed)
@@ -69,11 +74,16 @@ def main(cfg):
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     size = cfg.hyperparameters.input_length
-    #model = SimpleCNN(size).to(device1)
-    model = ProposedCNN(size).to(device1)
+    model = SimpleCNN(size).to(device1)
+    #model = ProposedCNN(size).to(device1)
+    #model = BaseCNN(size).to(device1)
     #model = ResidualCNN(size).to(device1)
     #model = SimpleViTRegressor(size).to(device1)
-
+    init.kaiming_normal_(model.conv1.weight, mode='fan_out', nonlinearity='relu')
+    init.xavier_normal_(model.conv2.weight, gain=1.0)
+    init.xavier_normal_(model.fc.weight, gain=1.0)
+    #init.kaiming_normal_(model.conv2.weight, mode='fan_out', nonlinearity='relu')
+    #init.kaiming_normal_(model.fc.weight, mode='fan_out', nonlinearity='relu')
     def relative_sum_loss(pred, target):
         epsilon = 1e-7
         loss = torch.mean(torch.abs(target - pred) / (target + epsilon))

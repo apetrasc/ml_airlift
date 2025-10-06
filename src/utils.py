@@ -2,6 +2,48 @@ import numpy as np
 import torch
 from scipy.signal import hilbert
 import matplotlib.pyplot as plt
+import yaml
+import os
+def preprocess(x_raw, device):
+    """
+    Preprocess the input data for model prediction.
+    This includes:
+    - Converting to torch tensor and moving to the specified device
+    - Applying the Hilbert transform (using hilbert_cuda)
+    - Handling NaN values
+    - Adding channel dimension
+    - Normalizing each (length, channel) column for each sample in the batch
+    - Applying log1p transformation
+
+    Args:
+        x_raw (np.ndarray): Raw input data of shape (batch, length)
+        device (str or torch.device): Device to move tensors to
+
+    Returns:
+        torch.Tensor: Preprocessed tensor ready for model input
+    """
+    x_raw_torch = torch.from_numpy(x_raw).float()
+    x_raw_torch = x_raw_torch.to(device)
+    x_test = hilbert_cuda(x_raw_torch, device)
+    #print("hilbert transform done")
+    if np.isnan(x_test).any():
+        print("nan")
+        x_test = np.nan_to_num(x_test)
+    x_test_tensor = torch.from_numpy(x_test).float()
+
+    # Add channel dimension: (batch, 1, length, channel)
+    x_test_tensor_all = x_test_tensor.unsqueeze(1)
+    # Normalize each (length, channel) column for each sample in the batch
+    max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]
+    max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
+    x_test_tensor_all = x_test_tensor_all / max_values_per_column
+
+    # Use only the first channel for CNN input
+    x_test_tensor_cnn = x_test_tensor_all[:, :, :]
+    x_test_tensor_cnn = x_test_tensor_cnn.to(device)
+    x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
+    return x_test_tensor_cnn
+
 
 def hilbert_cuda(img_data_torch, device):
             """
@@ -58,71 +100,20 @@ def preprocess_and_predict(path, model, device, plot_index=80):
     Returns:
         torch.Tensor: Model predictions.
     """
-    import numpy as np
-    import torch
-    from scipy.signal import hilbert
-    import matplotlib.pyplot as plt
 
     # Load and preprocess data
     x_raw = np.load(path)["processed_data"][:,:,0]
-    #print(x_raw.shape)
     
     import os
     filename = os.path.basename(path)
     print(f"loading successful and processing {filename}..")
-    #npz2png(file_path=path,save_path=output_folder_path,full=False,pulse_index=1)
-    #npz2png(file_path=path,save_path=output_folder_path,full=True,pulse_index=2)
-    #print(f"max: {np.max(x_raw)}")
-    #x_test = np.abs(hilbert(x_raw))
-    x_raw_torch = torch.from_numpy(x_raw).float()
-    x_raw_torch = x_raw_torch.to(device)
-    x_test = hilbert_cuda(x_raw_torch,device)
-    #print(f"max: {np.max(x_test)}")
-    if np.isnan(x_test).any():
-        print("nan")
-        x_test = np.nan_to_num(x_test)
-    x_test_tensor = torch.from_numpy(x_test).float()
-
-    # Add channel dimension: (batch, 1, length, channel)
-    x_test_tensor_all = x_test_tensor.unsqueeze(1)
-    #print(x_test_tensor_all.shape)
-    # Normalize each (length, channel) column for each sample in the batch
-    max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]
-    #print(f"max_values_per_column.shape: {max_values_per_column.shape}")
-    max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
-    x_test_tensor_all = x_test_tensor_all / max_values_per_column
-    #print(f"max: {torch.max(x_test_tensor_all)}")
-
-    # Use only the first channel for CNN input
-    x_test_tensor_cnn = x_test_tensor_all[:, :, :]
-    x_test_tensor_cnn = x_test_tensor_cnn.to(device)
-    x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
-    #print("log1p done")
-    max_values_per_column = torch.max(x_test_tensor_cnn, dim=2, keepdim=True)[0]
-    max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
-    x_test_tensor_cnn = x_test_tensor_cnn / max_values_per_column
-    #x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
-    #print(x_test_tensor.shape)
-    #print(x_test_tensor_cnn.shape)
-    print(f"max: {torch.max(x_test_tensor_cnn)}")
-    #print(x_test_tensor_cnn)
-    # Plot a sample signal
-    # plt.figure(figsize=(10, 4))
-    # plt.plot(x_test_tensor_cnn[5, 0,:].cpu().numpy())
-    # plt.title("x_test_tensor_cnn Signal")
-    # plt.xlabel("sample Index")
-    # plt.ylabel("Value")
-    # plt.grid(True)
-    # plt.show()
-    #print(x_test_tensor_cnn[plot_index,0,:].shape)
+    x_test_tensor_cnn = preprocess(x_raw, device)
     # Model prediction
     model.eval()
     with torch.no_grad():
         x_test_tensor_cnn = x_test_tensor_cnn.to(device)
         predictions = model(x_test_tensor_cnn)
         mean, var = torch.mean(predictions), torch.var(predictions)
-        #print(f"predictions.shape: {predictions.shape}")
-        #print(predictions)
         print(f"mean: {mean}, var: {var}")
         # Release memory after computation
         del predictions
@@ -270,3 +261,37 @@ def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=None
         print(new_save_path)
         plt.savefig(new_save_path)
         plt.close()
+
+def debug_pipeline(base_dir, config_path, file_path):
+    """
+    Load processed data from a .npz file, preprocess it, plot a specific slice, and save the plot as an image.
+    Args:
+        config_path (str): Path to the YAML configuration file.
+        file_path (str): Path to the processed .npz file.
+    """
+    # Load configuration from YAML file
+    config = yaml.safe_load(open(config_path))
+
+    # Check if the file exists
+    print("DEBUG: File exists:", os.path.exists(file_path))
+
+    # Load the processed data
+    x_raw_bug = np.load(file_path)["processed_data"][:,:,0]
+    filename = os.path.basename(file_path)
+    print(f"DEBUG: loading successful and processing {filename}..")
+
+    # Preprocess the data
+    x_debug = preprocess(x_raw_bug, config['evaluation']['device'])
+    x_debug = x_debug.cpu().numpy()
+    print(x_debug.shape)
+    print(x_debug[100, :, :].shape)
+
+    # Plot and save the 100th slice of the first channel
+    plt.figure(figsize=(10, 4))
+    plt.ylim(0, 1)
+    plt.plot(x_debug[100, 0, :])
+
+    save_debug = os.path.join(base_dir, "logs", f"x_debug_{filename}.png")
+    plt.savefig(save_debug)
+    plt.close()
+    print(f"DEBUG: saved x_debug_{filename}.png")
