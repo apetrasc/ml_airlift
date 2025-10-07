@@ -90,7 +90,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
         x_raw_torch = x_raw_torch.to(device)
         x_test = hilbert_cuda(x_raw_torch,device)
     x_test = rolling_window_signal(rolling_window, window_size, window_stride, np, pl, x_test)
-    print(f"max: {np.max(x_test[10])}")
+    #print(f"max: {np.max(x_test[10])}")
     print(f'xtest shap: {x_test.shape}')
     if np.isnan(x_test).any():
         print("nan")
@@ -127,7 +127,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
         x_test_tensor_cnn = x_test_tensor_cnn-x_liquid_only_tensor_cnn
     #print(x_test_tensor.shape)
     #print(x_test_tensor_cnn.shape)
-    #print(f"max: {torch.max(x_test_tensor_cnn)}")
+    print(f"max: {torch.max(x_test_tensor_cnn)}")
     #print(x_test_tensor_cnn)
     # Plot a sample signal
     if if_drawsignal:
