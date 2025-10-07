@@ -34,7 +34,13 @@ args = parser.parse_args()
 
 base_dir = args.datetime
 model_path = os.path.join(base_dir + '/weights/model.pth')
-model.load_state_dict(torch.load(model_path))
+model.load_state_dict(
+    torch.load(
+        model_path,
+        map_location=config['evaluation']['device'],
+        weights_only=True,
+    )
+)
 model.eval()
 
 print(target_variables.head())
@@ -207,8 +213,8 @@ plt.xticks(fontsize=16)
 plt.yticks(fontsize=16)
 plt.grid(True)
 plt.tight_layout()
-plt.show()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth.png'))
+plt.close()
 
 
 x_valid_stone, y_valid_stone_plot, yerr_valid_stone_plot = get_valid_data(x[is_str == 1], y_stone, yerr_stone)
@@ -229,7 +235,6 @@ plt.xticks(fontsize=16)
 plt.yticks(fontsize=16)
 plt.grid(True)
 plt.tight_layout()
-plt.show()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth_noerrorbars.png'))
 # Calculate RMSE (Root Mean Squared Error) and MAE (Mean Absolute Error) for x_valid and y_valid
 def calculate_rmse(y_true, y_pred):
@@ -266,8 +271,7 @@ plt.xticks(fontsize=16)
 plt.yticks(fontsize=16)
 plt.grid(True)
 plt.tight_layout()
-plt.show()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_truth_processed.png'))
-
-
+plt.close()
+print("saved all figures")
 
