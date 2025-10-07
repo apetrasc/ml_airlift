@@ -12,8 +12,8 @@ dataset:
 training:
   device: cuda:1
 evaluation:
-  target_variables_path: /home/apetr/Documents/ml_airlift/documents/target_valiables.csv
-  processed_dir: /home/apetr/.cache/kagglehub/datasets/sparecat/muddy-flow-processed-dataset/versions/1/processed/solid_liquid
+  target_variables_path: /home/matsubara/.cache/kagglehub/datasets/sparecat/muddy-flow-processed-dataset/versions/2/target_valiables.csv
+  processed_dir: /home/matsubara/.cache/kagglehub/datasets/sparecat/muddy-flow-processed-dataset/versions/2/exp_processed/processed/solid_liquid
   save_csv_path: /home/smatsubara/documents/airlift/data/outputs/
   device: cuda:0
   tmp_path: /home/smatsubara/documents/airlift/data/tmp
