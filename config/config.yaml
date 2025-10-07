@@ -11,14 +11,6 @@ dataset:
   t_train: /mnt/sdb/yyamaguchi/psdata2matlab/simulation2d/dataset/t_train.npy
   log_path: /mnt/sdb/yyamaguchi/psdata2matlab/output
 training:
-<<<<<<< HEAD
-=======
-  device: cuda:1
-evaluation:
-  target_variables_path: /home/apetr/Documents/ml_airlift/documents/target_valiables.csv
-  processed_dir: /home/apetr/.cache/kagglehub/datasets/sparecat/muddy-flow-processed-dataset/versions/1/processed/solid_liquid
-  save_csv_path: /home/smatsubara/documents/airlift/data/outputs/
->>>>>>> upstream/main
   device: cuda:0
 evaluation:
   target_variables_path: /mnt/sdb/matsubara/airlift/target_valiables.csv
@@ -27,6 +19,7 @@ evaluation:
   device: cuda:0
   tmp_path: /mnt/sdb/yyamaguchi/psdata2matlab/tmp
   results_path: /mnt/sdb/yyamaguchi/psdata2matlab/outputs/
+  png_save_dir: /mnt/sdb/yyamaguchi/psdata2matlab/preprocessed/
 
 hydra:
     run:

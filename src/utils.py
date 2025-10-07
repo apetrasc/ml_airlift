@@ -3,10 +3,7 @@ import torch
 from scipy.signal import hilbert
 import matplotlib.pyplot as plt
 
-def hilbert_cuda(img_data_torch, device, if_hilbert = True,
-                 low_filter_freq = 0,
-                 high_filter_freq = 1.0e9,
-                 fs = 52e6):
+def hilbert_cuda(img_data_torch, device):
             """
             Compute the Hilbert envelope of input data using torch (GPU/CPU).
 
@@ -39,32 +36,22 @@ def hilbert_cuda(img_data_torch, device, if_hilbert = True,
 
             # FFT along the time axis
             Xf = torch.fft.fft(img_data_torch, dim=1)
-            low_filter_idx = 0.0
-            high_filter_idx = float("Inf")
-            low_filter_idx = int(low_filter_freq / fs * n_samples)
-            high_filter_idx = int(high_filter_freq /fs * n_samples)
-            if high_filter_idx > n_samples-1:
-                 high_filter_idx = n_samples-1
-            print(f'bandpass: {low_filter_idx}, {high_filter_idx}\n')
-            Xf[:,0:low_filter_idx] = 0
-            Xf[:,high_filter_idx:n_samples] = 0
-            if if_hilbert:
-                # Apply the Hilbert transformer
-                Xf = Xf * h
-                # IFFT to get the analytic signal
-                analytic_signal = torch.fft.ifft(Xf, dim=1)
-                # Take the amplitude envelope
-                img_data_torch_abs = torch.abs(analytic_signal)
-                # Move to CPU and convert to numpy array
-                return img_data_torch_abs.cpu().numpy()
-            else:
-                analytic_signal = torch.fft.ifft(Xf, dim=1)
-                return analytic_signal.cpu().numpy()
+            # Apply the Hilbert transformer
+            Xf = Xf * h
+            # IFFT to get the analytic signal
+            analytic_signal = torch.fft.ifft(Xf, dim=1)
+            # Take the amplitude envelope
+            img_data_torch_abs = torch.abs(analytic_signal)
+            # Move to CPU and convert to numpy array
+            return img_data_torch_abs.cpu().numpy()
 
 def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
                            filter_freq=[0, 1.0e9],
                            rolling_window=False, window_size=20,
-                           window_stride=10, if_log1p=False, if_hilbert=True):
+                           window_stride=10, if_log1p=False, if_hilbert=True,
+                           if_reduce=False, x_liquid_only=None, 
+                           if_drawsignal=False, png_save_dir=None,
+                           png_name=None):
     """
     Loads data from the given path, applies Hilbert transform and normalization,
     and runs prediction using the provided model.
@@ -80,8 +67,6 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
     """
     import numpy as np
     import torch
-    import scipy.signal 
-    import hilbert
     import matplotlib.pyplot as plt
     import polars as pl
 
@@ -89,6 +74,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
     x_raw = np.load(path)["processed_data"][:,:,0]
     fs = np.load(path)["fs"]
     print(x_raw.shape)
+    print(f'fs:{fs}[Hz]')
     
     import os
     filename = os.path.basename(path)
@@ -97,15 +83,85 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
     #npz2png(file_path=path,save_path=output_folder_path,full=True,pulse_index=2)
     #print(f"max: {np.max(x_raw)}")
     #x_test = np.abs(hilbert(x_raw))
-    x_raw_torch = torch.from_numpy(x_raw).float()
-    x_raw_torch = x_raw_torch.to(device)
-    min_freq = filter_freq[0]
-    max_freq = filter_freq[1]
+    filter_signal(filter_freq, x_raw, fs)
+    x_test = x_raw.copy()
+    if if_hilbert:
+        x_raw_torch = torch.from_numpy(x_test).float()
+        x_raw_torch = x_raw_torch.to(device)
+        x_test = hilbert_cuda(x_raw_torch,device)
+    x_test = rolling_window_signal(rolling_window, window_size, window_stride, np, pl, x_test)
+    print(f"max: {np.max(x_test[10])}")
+    print(f'xtest shap: {x_test.shape}')
+    if np.isnan(x_test).any():
+        print("nan")
+        x_test = np.nan_to_num(x_test)
+    print(f'x_test shape: {x_test.shape}')
+    pulse_num = x_test.shape[0]
+    x_test_tensor = torch.from_numpy(x_test).float()
 
-    x_test = hilbert_cuda(x_raw_torch,device, if_hilbert,
-                              min_freq, max_freq, fs)
-    x_test_tmp = []
+    # Add channel dimension: (batch, 1, length, channel)
+    x_test_tensor_all = x_test_tensor.unsqueeze(1)
+    print(f'x_test_tensor_all shape: {x_test_tensor_all.shape}')
+    # Normalize each (length, channel) column for each sample in the batch
+    max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]
+    #print(f"max_values_per_column.shape: {max_values_per_column.shape}")
+    max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
+    x_test_tensor_all = x_test_tensor_all / max_values_per_column
+    #print(f"max: {torch.max(x_test_tensor_all)}")
+
+    # Use only the first channel for CNN input
+    x_test_tensor_cnn = x_test_tensor_all[:, :, :]
+    x_test_tensor_cnn = x_test_tensor_cnn.to(device)
+    if if_log1p:
+        x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
+    if if_reduce:
+        x_liquid_only_tensor = torch.from_numpy(x_liquid_only).float()
+        #print(f'x_liquid_only_tensor shape: {x_liquid_only_tensor.shape}')
+        x_liquid_only_tensor = x_liquid_only_tensor.unsqueeze(0)
+        #print(f'x_liquid_only_tensor shape: {x_liquid_only_tensor.shape}')
+        x_liquid_only_tensor = x_liquid_only_tensor.expand(pulse_num,-1)
+        #print(f'x_liquid_only_tensor shape: {x_liquid_only_tensor.shape}')
+        x_liquid_only_tensor = x_liquid_only_tensor.unsqueeze(1)
+        #print(f'x_liquid_only_tensor shape: {x_liquid_only_tensor.shape}')
+        x_liquid_only_tensor_cnn = x_liquid_only_tensor.to(device)
+        x_test_tensor_cnn = x_test_tensor_cnn-x_liquid_only_tensor_cnn
+    #print(x_test_tensor.shape)
+    #print(x_test_tensor_cnn.shape)
+    #print(f"max: {torch.max(x_test_tensor_cnn)}")
+    #print(x_test_tensor_cnn)
+    # Plot a sample signal
+    if if_drawsignal:
+        plt.figure(figsize=(10, 4))
+        plt.plot(x_test_tensor_cnn[1000, 0,:].cpu().numpy())
+        if not (if_hilbert or rolling_window):
+            plt.plot(hilbert_cuda(x_test_tensor_cnn[1000,0,:].cpu().numpy()))
+        plt.title("x_test_tensor_cnn Signal")
+        plt.xlabel("sample Index")
+        plt.ylabel("Value")
+        plt.grid(True)
+        if png_save_dir!=None:
+            base_filename = os.path.splitext(os.path.basename(path))[0]
+            plt.savefig(os.path.join(png_save_dir,f'{base_filename}_{png_name}.png'))
+        #plt.show()
+        plt.close()
+    #print(x_test_tensor_cnn[plot_index,0,:].shape)
+    # Model prediction
+    model.eval()
+    with torch.no_grad():
+        x_test_tensor_cnn = x_test_tensor_cnn.to(device)
+        predictions = model(x_test_tensor_cnn)
+        mean, var = torch.mean(predictions), torch.var(predictions)
+        #print(f"predictions.shape: {predictions.shape}")
+        #print(predictions)
+        print(f"mean: {mean}, var: {var}")
+        # Release memory after computation
+        del predictions
+        torch.cuda.empty_cache()
+    return mean, var
+
+def rolling_window_signal(rolling_window, window_size, window_stride, np, pl, x_test):
     if rolling_window:
+        x_test_tmp = []
         for x_pulse in x_test:
             s =pl.Series(x_pulse)
 
@@ -117,6 +173,72 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
             x_test_tmp.append(x_pulse)
         x_test = np.array(x_test_tmp)
         print('ここまでOK')
+    return x_test
+
+def filter_signal(filter_freq, x_raw, fs):
+    from scipy import signal
+    min_freq = filter_freq[0]
+    max_freq = filter_freq[1]
+    x_test = x_raw.copy()
+    if min_freq != 0 and max_freq < fs:
+        #print(f'bandpass filter is chosen')
+        sos = signal.butter(N=16,Wn=[min_freq, max_freq],
+                        btype='bandpass',analog=False,output='sos',fs=fs)
+        for i in range(x_test.shape[0]):
+            x_test[i,:]=signal.sosfiltfilt(sos,x_test[i,:])
+    elif min_freq != 0:
+        sos = signal.butter(N=4,Wn=min_freq,
+                        btype='highpass',analog=False,output='sos',fs=fs)
+        for i in range(x_test.shape[0]):
+            x_test[i,:]=signal.sosfiltfilt(sos,x_test[i,:])
+    elif max_freq < fs:
+        sos = signal.butter(N=4,Wn=max_freq,
+                        btype='lowpass',analog=False,output='sos',fs=fs)
+        for i in range(x_test.shape[0]):
+            x_test[i,:]=signal.sosfiltfilt(sos,x_test[i,:])
+
+def preprocess_liquidonly(path, plot_index=80, device='cuda:0',
+                           filter_freq=[0, 1.0e9],
+                           rolling_window=False, window_size=20,
+                           window_stride=10, if_log1p=False, 
+                           if_hilbert=True):
+    """
+    Loads data from the given path, applies Hilbert transform and normalization,
+    and runs prediction using the provided model.
+
+    Args:
+        path (str): Path to the .npz file containing 'processed_data'.
+        model (torch.nn.Module): Trained PyTorch model for prediction.
+        plot_index (int): Index of the sample to plot.
+        device (str): Device to run the model on.
+
+    Returns:
+        torch.Tensor: Model predictions.
+    """
+    import numpy as np
+    import torch
+    import matplotlib.pyplot as plt
+    import polars as pl
+
+    # Load and preprocess data
+    x_raw = np.load(path)["processed_data"][:,:,0]
+    fs = np.load(path)["fs"]
+    print(x_raw.shape)
+    print(f'fs:{fs}[Hz]')
+    
+    import os
+    filename = os.path.basename(path)
+    print(f"loading successful and processing {filename}..")
+    #npz2png(file_path=path,save_path=output_folder_path,full=False,pulse_index=1)
+    #npz2png(file_path=path,save_path=output_folder_path,full=True,pulse_index=2)
+    #print(f"max: {np.max(x_raw)}")
+    #x_test = np.abs(hilbert(x_raw))
+    filter_signal(filter_freq, x_raw, fs)
+    if if_hilbert:
+        x_raw_torch = torch.from_numpy(x_raw).float()
+        x_raw_torch = x_raw_torch.to(device)
+        x_test = hilbert_cuda(x_raw_torch,device)
+    x_test = rolling_window_signal(rolling_window, window_size, window_stride, np, pl, x_test)
     print(f"max: {np.max(x_test[10])}")
     print(f'xtest shap: {x_test.shape}')
     if np.isnan(x_test).any():
@@ -140,31 +262,8 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
     x_test_tensor_cnn = x_test_tensor_cnn.to(device)
     if if_log1p:
         x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
-    #x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
-    #print(x_test_tensor.shape)
-    #print(x_test_tensor_cnn.shape)
-    #print(f"max: {torch.max(x_test_tensor_cnn)}")
-    #print(x_test_tensor_cnn)
-    # Plot a sample signal
-    plt.figure(figsize=(10, 4))
-    plt.plot(x_test_tensor_cnn[5, 0,:].cpu().numpy())
-    plt.title("x_test_tensor_cnn Signal")
-    plt.xlabel("sample Index")
-    plt.ylabel("Value")
-    plt.grid(True)
-    #plt.show()
-    plt.close()
-    #print(x_test_tensor_cnn[plot_index,0,:].shape)
-    # Model prediction
-    model.eval()
-    with torch.no_grad():
-        x_test_tensor_cnn = x_test_tensor_cnn.to(device)
-        predictions = model(x_test_tensor_cnn)
-        mean, var = torch.mean(predictions), torch.var(predictions)
-        #print(f"predictions.shape: {predictions.shape}")
-        #print(predictions)
-        print(f"mean: {mean}, var: {var}")
-        # Release memory after computation
-        del predictions
-        torch.cuda.empty_cache()
-    return mean, var
+    x_test_tensor_1d = torch.mean(x_test_tensor_cnn, dim=0)
+    x_test_tensor_1d = torch.mean(x_test_tensor_1d, dim=0)
+    x_test = x_test_tensor_1d.cpu().numpy()
+    print(f'liquid only xtest shape: {x_test.shape}')
+    return x_test

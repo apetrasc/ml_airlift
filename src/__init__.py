@@ -1,3 +1,5 @@
-from .utils import preprocess_and_predict
+from .utils import preprocess_and_predict, preprocess_liquidonly
 
-__all__ = ['preprocess_and_predict']
+__all__ = [
+    'preprocess_and_predict',
+    'preprocess_liquidonly']

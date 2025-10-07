@@ -1,5 +1,5 @@
 import polars as pl
-from src import preprocess_and_predict
+from src import preprocess_and_predict,preprocess_liquidonly
 from models import SimpleCNN
 import torch
 import numpy as np
@@ -12,6 +12,8 @@ import sys
 # Load configuration from YAML file
 with open('config/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
+
+png_save_dir = config['evaluation']['png_save_dir']
 
 # Read the target variables CSV file (experiment metadata)
 target_variables = pl.read_csv(
@@ -27,7 +29,7 @@ model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluati
 parser = argparse.ArgumentParser(description="Run evaluation with specified base directory (datetime).")
 parser.add_argument('--datetime', type=str, required=True, help='Base directory for evaluation (e.g., /home/smatsubara/documents/airlift/data/outputs/2025-09-07/14-39-46)')
 parser.add_argument('--bandpass', nargs=2, type=float, required=False, help=
-                    'Low Freq, High Freq')
+                    'Low Freq, High Freq. The unit is [MHz]')
 parser.add_argument('--log1p', type=bool, required=False, default=False,
                     help='If applying log1p')
 parser.add_argument('--rolling', type=bool, required=False, default=False,
@@ -36,6 +38,10 @@ parser.add_argument('--rollingparam', nargs=2, type=int, required=False,
                     help='Window Size, Stride')
 parser.add_argument('--hilbert', type=bool, required=False, default=True,
                     help='If applying hilbert envelope')
+parser.add_argument('--reduce', type=bool, required=False, default=False,
+                    help='If reducing signals by liquid-only ones')
+parser.add_argument('--drawsignal', type=bool, required=False, default=False,
+                    help='If drawing signals')
 args = parser.parse_args()
 
 if args.bandpass:
@@ -50,6 +56,8 @@ else:
 if_log1p = args.log1p
 if_rolling = args.rolling
 if_hilbert = args.hilbert
+if_reduce = args.reduce
+if_drawsignal = args.drawsignal
 window_size = 0
 window_stride = 0
 
@@ -94,6 +102,25 @@ target_variables = target_variables.with_columns(
     (pl.lit(processed_dir + "/") + pl.col("NAME") + pl.lit("_processed.npz")).alias("FullPath")
 )
 
+# Get the mean raw signal preprocessed in the same way as solid-liquid signals
+x_liquid_only = None
+if if_reduce:
+    for row in target_variables.iter_rows(named=True):
+        if row["気相体積率"]==0 and row["固相体積率"]==0:
+            file_path = row["FullPath"]
+            x_liquid_only = preprocess_liquidonly(path=file_path,
+                                                filter_freq=[low_freq, high_freq],
+                                                rolling_window=if_rolling,
+                                                window_size=window_size,
+                                                window_stride=window_stride,
+                                                if_hilbert=if_hilbert,
+                                                if_log1p = if_log1p,
+                                                if_drawsignal=if_drawsignal)
+            break
+        
+
+
+
 # For each row, load the processed .npz file, run inference, and add mean and variance as new columns
 mean_list = []
 var_list = []
@@ -112,7 +139,11 @@ for row in target_variables.iter_rows(named=True):
                                                window_size=window_size,
                                                window_stride=window_stride,
                                                if_hilbert=if_hilbert,
-                                               if_log1p = if_log1p)
+                                               if_log1p = if_log1p,
+                                               if_reduce = if_reduce,
+                                               x_liquid_only=x_liquid_only,
+                                               if_drawsignal=if_drawsignal,
+                                               png_save_dir=png_save_dir)
             mean_list.append(mean)
             var_list.append(var)
         except Exception as e:
@@ -155,44 +186,76 @@ target_variables = pl.read_csv(
 )
 print(target_variables.head())
 
-# Plot mean (y-axis) vs. solid phase volume fraction (x-axis)
+glass_diameter_col = target_variables["ガラス球直径"]
+
+is_str = np.array([1 if isinstance(v, str) and not v.replace('.', '', 1).isdigit() else 0 for v in glass_diameter_col.to_numpy()])
+print(is_str.shape)
 x = target_variables["固相体積率"].to_numpy()
 y = target_variables["mean"].to_numpy()
+# y_stone = target_variables["mean_stone"].to_numpy()
+y_stone = y[is_str == 1]
 
 
 yerr = target_variables["var"].to_numpy() ** 0.5
+yerr_stone = yerr[is_str == 1]
 
 #  Calculate the correlation coefficient between x and y
 # Remove any NaN values before calculation
 # x, y, yerr からNaNを除外した有効なデータのみを抽出
-mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(yerr)
-x_valid = x[mask]
-y_valid = y[mask]
-yerr_valid = yerr[mask]
+def get_valid_data(x, y, yerr):
+    """
+    Remove NaN values from x, y, and yerr, and return only valid data.
+    """
+    mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(yerr)
+    x_valid = x[mask]
+    y_valid = y[mask]
+    yerr_valid = yerr[mask]
+    return x_valid, y_valid, yerr_valid
 
-
-bias = np.min(y_valid) * np.ones(len(y_valid))
-c=(1/3*math.pi+math.sqrt(3)/2)/math.pi
-y_processed = (1/c)*(y_valid - bias)
-print(c)
+x_valid, y_valid, yerr_valid = get_valid_data(x, y, yerr)
 
 print(y_valid)
-print(np.min(y_processed))
+# print(np.max(y_processed))
+# print(np.max(y_valid_stone))
+# print(np.max(y_processed_stone))
+# print(np.min(y_processed_stone))
+# print(np.max(y_processed))
+# print(np.min(y_processed))
+def calibration(x, y, yerr):
+    """
+    Calibrate the predicted values using the ground truth values.
+    """
+    bias = np.min(y) * np.ones(len(y))
+    c=(1/3*math.pi+math.sqrt(3)/2)/math.pi
+    y_processed = y - bias
+    return y_processed
+
+y_valid_calibrated = calibration(x_valid, y_valid, yerr_valid)
+# y_valid_stone_calibrated = calibration(x_valid_stone, y_valid_stone, yerr_valid_stone)
 
 if len(x_valid) > 1:
-    corr_coef = np.corrcoef(x_valid, y_valid)[0, 1]
+    corr_coef = np.corrcoef(x_valid, y_valid_calibrated)[0, 1]
     print(f"Correlation coefficient between x and y: {corr_coef:.4f}")
 else:
     print("Not enough valid data to calculate correlation coefficient.")
 
 plt.figure(figsize=(8, 8))
-plt.errorbar(x_valid, y_valid, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3)
+plt.errorbar(
+    x_valid, y_valid, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3, label='All'
+)
+x_valid_stone, y_valid_stone_plot, yerr_valid_stone_plot = get_valid_data(x[is_str == 1], y_stone, yerr_stone)
+plt.errorbar(
+    x_valid_stone, y_valid_stone_plot, yerr=yerr_valid_stone_plot, fmt='o', color='orange', alpha=0.7, ecolor='green', capsize=3, label='Stone'
+)
+plt.legend(fontsize=18)
 plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
-plt.xlabel("Solid Phase Volume Fraction")
-plt.ylabel("Mean")
+plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
+plt.ylabel("Prediction(machine learning)", fontsize=18)
 plt.xlim(0, 0.2)
 plt.ylim(0, 0.2)
-plt.title("Predicted vs. Ground Truth")
+plt.title("Predicted vs. Ground Truth", fontsize=20)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth.png'))
@@ -222,16 +285,23 @@ plt.close()
 # Optionally, display the results
 # print(target_variables.select(cols_to_show))
 plt.figure(figsize=(8, 8))
-plt.errorbar(x_valid, y_processed, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3)
+# y_valid_calibrated（全体）とy_valid_stone_calibrated（石あり）を色分けして表示
+plt.errorbar(x_valid, y_valid_calibrated, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3, label='glass ball (calibrated)')
+# y_valid_stone_calibrated用のx, y, yerrを抽出（is_str==1のインデックスを利用）
+x_valid_stone, y_valid_stone_plot, yerr_valid_stone_plot = get_valid_data(x[is_str == 1], y_stone, yerr_stone)
+y_valid_stone_calibrated = calibration(x_valid_stone, y_valid_stone_plot, yerr_valid_stone_plot)
+plt.errorbar(x_valid_stone, y_valid_stone_calibrated, yerr=yerr_valid_stone_plot, fmt='o', color='orange', alpha=0.7, ecolor='green', capsize=3, label='Stone (calibrated)')
+plt.legend()
 plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
-plt.xlabel("Ground Truth")
-plt.ylabel("Predicted")
+plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
+plt.ylabel("Prediction(machine learning)", fontsize=18)
 plt.xlim(-0, 0.2)
 plt.ylim(-0, 0.2)
-plt.title("Predicted vs. Truth (Processed)")
+plt.title("Predicted vs. Truth (Processed)", fontsize=20)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_truth_processed.png'))
 plt.close()
 print("saved all figures")
-
