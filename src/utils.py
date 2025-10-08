@@ -48,7 +48,7 @@ def hilbert_cuda(img_data_torch, device):
 def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
                            filter_freq=[0, 1.0e9],
                            rolling_window=False, window_size=20,
-                           window_stride=10, if_log1p=False, if_hilbert=True,
+                           window_stride=10, if_log1p=True, if_hilbert=True,
                            if_reduce=False, x_liquid_only=None, 
                            if_drawsignal=False, png_save_dir=None,
                            png_name=None):
@@ -75,6 +75,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
     fs = np.load(path)["fs"]
     print(x_raw.shape)
     print(f'fs:{fs}[Hz]')
+    x_test = x_raw.copy()
     
     import os
     filename = os.path.basename(path)
@@ -83,13 +84,15 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
     #npz2png(file_path=path,save_path=output_folder_path,full=True,pulse_index=2)
     #print(f"max: {np.max(x_raw)}")
     #x_test = np.abs(hilbert(x_raw))
-    filter_signal(filter_freq, x_raw, fs)
-    x_test = x_raw.copy()
+    x_tmp = x_test.copy()
+    x_test=filter_signal(filter_freq, x_tmp, fs)
     if if_hilbert:
+        print(f'hilbert started')
         x_raw_torch = torch.from_numpy(x_test).float()
         x_raw_torch = x_raw_torch.to(device)
         x_test = hilbert_cuda(x_raw_torch,device)
-    x_test = rolling_window_signal(rolling_window, window_size, window_stride, np, pl, x_test)
+    x_tmp2 = x_test.copy()
+    x_test = rolling_window_signal(rolling_window, window_size, window_stride, np, pl, x_tmp2)
     #print(f"max: {np.max(x_test[10])}")
     print(f'xtest shap: {x_test.shape}')
     if np.isnan(x_test).any():
@@ -103,7 +106,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
     x_test_tensor_all = x_test_tensor.unsqueeze(1)
     print(f'x_test_tensor_all shape: {x_test_tensor_all.shape}')
     # Normalize each (length, channel) column for each sample in the batch
-    max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]
+    max_values_per_column = torch.max(torch.abs(x_test_tensor_all), dim=2, keepdim=True)[0]
     #print(f"max_values_per_column.shape: {max_values_per_column.shape}")
     max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
     x_test_tensor_all = x_test_tensor_all / max_values_per_column
@@ -131,14 +134,23 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
     #print(x_test_tensor_cnn)
     # Plot a sample signal
     if if_drawsignal:
+        n_samples = x_test_tensor_cnn[1000, 0,:].cpu().numpy().shape[0]
+        #print(f'n_samples: {n_samples}')
+        t = np.arange(n_samples)/fs
         plt.figure(figsize=(10, 4))
-        plt.plot(x_test_tensor_cnn[1000, 0,:].cpu().numpy())
+        plt.rcParams["font.size"] = 18
+        plt.plot(t*1e6,x_test_tensor_cnn[1000, 0,:].cpu().numpy(),
+                 color='blue',label='Processed Signal')
+        #print(f'first plot done')
         if not (if_hilbert or rolling_window):
-            plt.plot(hilbert_cuda(x_test_tensor_cnn[1000,0,:].cpu().numpy()))
-        plt.title("x_test_tensor_cnn Signal")
-        plt.xlabel("sample Index")
-        plt.ylabel("Value")
+            x_test_envelope = hilbert_cuda(x_test_tensor_cnn[:,0,:],device)
+            plt.plot(t*1e6,x_test_envelope[1000,:],
+                     color='red',label='Envelope')
+            #print(f'second plot done')
+        plt.xlabel("Time (µs)")
+        plt.ylabel("Amplitude")
         plt.grid(True)
+        plt.tight_layout()
         if png_save_dir!=None:
             base_filename = os.path.splitext(os.path.basename(path))[0]
             plt.savefig(os.path.join(png_save_dir,f'{base_filename}_{png_name}.png'))
@@ -175,27 +187,29 @@ def rolling_window_signal(rolling_window, window_size, window_stride, np, pl, x_
         print('ここまでOK')
     return x_test
 
-def filter_signal(filter_freq, x_raw, fs):
+def filter_signal(filter_freq, x_raw, fs, device='cuda:0'):
     from scipy import signal
     min_freq = filter_freq[0]
     max_freq = filter_freq[1]
-    x_test = x_raw.copy()
-    if min_freq != 0 and max_freq < fs:
-        #print(f'bandpass filter is chosen')
-        sos = signal.butter(N=16,Wn=[min_freq, max_freq],
-                        btype='bandpass',analog=False,output='sos',fs=fs)
-        for i in range(x_test.shape[0]):
-            x_test[i,:]=signal.sosfiltfilt(sos,x_test[i,:])
-    elif min_freq != 0:
-        sos = signal.butter(N=4,Wn=min_freq,
-                        btype='highpass',analog=False,output='sos',fs=fs)
-        for i in range(x_test.shape[0]):
-            x_test[i,:]=signal.sosfiltfilt(sos,x_test[i,:])
-    elif max_freq < fs:
-        sos = signal.butter(N=4,Wn=max_freq,
-                        btype='lowpass',analog=False,output='sos',fs=fs)
-        for i in range(x_test.shape[0]):
-            x_test[i,:]=signal.sosfiltfilt(sos,x_test[i,:])
+    x_size = x_raw.shape[1]
+    #print(f'x_raw shape: {x_raw.shape}')
+    x_tensor = torch.from_numpy(x_raw).float()
+    x_tensor = x_tensor.to(device)
+    Xf = torch.fft.fft(x_tensor,dim=1)
+    #print(f'Xf shape: {Xf.shape}')
+    min_freq_idx = int(x_size*min_freq/fs)
+    Xf[:,0:min_freq_idx]=0
+    #print(f'min freq index: {min_freq_idx}')
+    #print(f'Xf shape: {Xf.shape}')
+    max_freq_idx = np.min([x_size*max_freq/fs, x_size//2-1])
+    max_freq_idx = int(max_freq_idx)
+    #print(f'max freq index: {max_freq_idx}')
+    Xf[:,max_freq_idx:]=0
+    #print(f'Xf shape: {Xf.shape}')
+    x_tensor_new = torch.fft.ifft(Xf,dim=1)
+    #print(f'x_tensor_new shape: {x_tensor_new.shape}')
+    x_tensor_new = torch.real(x_tensor_new)
+    return x_tensor_new.cpu().numpy()
 
 def preprocess_liquidonly(path, plot_index=80, device='cuda:0',
                            filter_freq=[0, 1.0e9],
@@ -225,6 +239,7 @@ def preprocess_liquidonly(path, plot_index=80, device='cuda:0',
     fs = np.load(path)["fs"]
     print(x_raw.shape)
     print(f'fs:{fs}[Hz]')
+    x_test=x_raw.copy()
     
     import os
     filename = os.path.basename(path)

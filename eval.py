@@ -30,18 +30,20 @@ parser = argparse.ArgumentParser(description="Run evaluation with specified base
 parser.add_argument('--datetime', type=str, required=True, help='Base directory for evaluation (e.g., /home/smatsubara/documents/airlift/data/outputs/2025-09-07/14-39-46)')
 parser.add_argument('--bandpass', nargs=2, type=float, required=False, help=
                     'Low Freq, High Freq. The unit is [MHz]')
-parser.add_argument('--log1p', type=bool, required=False, default=False,
+parser.add_argument('--log1p', type=int, required=False, default=0,
                     help='If applying log1p')
-parser.add_argument('--rolling', type=bool, required=False, default=False,
+parser.add_argument('--rolling', type=int, required=False, default=0,
                     help='If applying maximum rolling windows')
 parser.add_argument('--rollingparam', nargs=2, type=int, required=False,
                     help='Window Size, Stride')
-parser.add_argument('--hilbert', type=bool, required=False, default=True,
+parser.add_argument('--hilbert', type=int, required=False,default=1,
                     help='If applying hilbert envelope')
-parser.add_argument('--reduce', type=bool, required=False, default=False,
-                    help='If reducing signals by liquid-only ones')
-parser.add_argument('--drawsignal', type=bool, required=False, default=False,
+parser.add_argument('--reduce', type=int, required=False, default=0,
+                    help='If reducing signals by liquidonly ones')
+parser.add_argument('--drawsignal', type=int, required=False, default=0,
                     help='If drawing signals')
+parser.add_argument('--pngname', type=str, required=False, default='eval',
+                    help='Name of png')
 args = parser.parse_args()
 
 if args.bandpass:
@@ -58,6 +60,7 @@ if_rolling = args.rolling
 if_hilbert = args.hilbert
 if_reduce = args.reduce
 if_drawsignal = args.drawsignal
+png_name = args.pngname
 window_size = 0
 window_stride = 0
 
@@ -114,8 +117,7 @@ if if_reduce:
                                                 window_size=window_size,
                                                 window_stride=window_stride,
                                                 if_hilbert=if_hilbert,
-                                                if_log1p = if_log1p,
-                                                if_drawsignal=if_drawsignal)
+                                                if_log1p = if_log1p)
             break
         
 
@@ -124,6 +126,8 @@ if if_reduce:
 # For each row, load the processed .npz file, run inference, and add mean and variance as new columns
 mean_list = []
 var_list = []
+
+print(f'if_hilbert: {if_hilbert}')
 
 for row in target_variables.iter_rows(named=True):
     file_path = row["FullPath"]
@@ -143,7 +147,8 @@ for row in target_variables.iter_rows(named=True):
                                                if_reduce = if_reduce,
                                                x_liquid_only=x_liquid_only,
                                                if_drawsignal=if_drawsignal,
-                                               png_save_dir=png_save_dir)
+                                               png_save_dir=png_save_dir,
+                                               png_name=png_name)
             mean_list.append(mean)
             var_list.append(var)
         except Exception as e:
