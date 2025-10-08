@@ -51,7 +51,7 @@ stack-data==0.6.3
 sympy==1.13.3
 tornado==6.4.2
 traitlets==5.14.3
-triton==3.0.0
+triton==3.0.0; platform_system != "Windows"
 typing_extensions==4.13.2
 wcwidth==0.2.13
 zipp==3.20.2
