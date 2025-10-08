@@ -6,7 +6,7 @@ __pycache__/
 output/
 # C extensions
 *.so
-
+/config/config.yaml
 # Distribution / packaging
 .Python
 build/
