@@ -1,6 +1,6 @@
 import polars as pl
-from src import preprocess_and_predict,preprocess_liquidonly
-from models import SimpleCNN
+from src import preprocess_and_predict, preprocess, debug_pipeline,preprocess_liquidonly
+from models import SimpleCNN, SimpleViTRegressor, ResidualCNN, BaseCNN, ProposedCNN
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -22,7 +22,12 @@ target_variables = pl.read_csv(
 )
 
 # Load the trained model
+#model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+#model = ResidualCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+#model = SimpleViTRegressor(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+#model = ProposedCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
+#model = BaseCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 # You can use the argparse library to accept a command-line argument for base_dir (datetime).
 
 
@@ -136,6 +141,13 @@ for row in target_variables.iter_rows(named=True):
         print("DEBUG: File path matches exactly:", file_path)
         print("DEBUG: File exists:", os.path.exists(file_path))
     if os.path.exists(file_path) and row["気相体積率"]==0:
+    
+    
+    if os.path.exists(file_path):
+        if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20241011-1015_processed.npz":
+            debug_pipeline(base_dir, 'config/config.yaml', file_path)
+        if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20240726-1600_processed.npz":
+            debug_pipeline(base_dir, 'config/config.yaml', file_path)
         try:
             mean, var = preprocess_and_predict(path=file_path, model=model,
                                                filter_freq=[low_freq, high_freq],
@@ -149,6 +161,7 @@ for row in target_variables.iter_rows(named=True):
                                                if_drawsignal=if_drawsignal,
                                                png_save_dir=png_save_dir,
                                                png_name=png_name)
+            mean, var = preprocess_and_predict(file_path, model, device=config['evaluation']['device'])
             mean_list.append(mean)
             var_list.append(var)
         except Exception as e:
@@ -239,7 +252,7 @@ y_valid_calibrated = calibration(x_valid, y_valid, yerr_valid)
 # y_valid_stone_calibrated = calibration(x_valid_stone, y_valid_stone, yerr_valid_stone)
 
 if len(x_valid) > 1:
-    corr_coef = np.corrcoef(x_valid, y_valid_calibrated)[0, 1]
+    corr_coef = np.corrcoef(x_valid, y_valid)[0, 1]
     print(f"Correlation coefficient between x and y: {corr_coef:.4f}")
 else:
     print("Not enough valid data to calculate correlation coefficient.")
@@ -258,7 +271,7 @@ plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
 plt.ylabel("Prediction(machine learning)", fontsize=18)
 plt.xlim(0, 0.2)
 plt.ylim(0, 0.2)
-plt.title("Predicted vs. Ground Truth", fontsize=20)
+plt.title("Prediction vs. Ground Truth", fontsize=20)
 plt.xticks(fontsize=16)
 plt.yticks(fontsize=16)
 plt.grid(True)
@@ -280,13 +293,27 @@ plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
 plt.ylabel("Prediction(machine learning)", fontsize=18)
 plt.xlim(0, 0.2)
 plt.ylim(0, 0.2)
-plt.title("Predicted vs. Ground Truth", fontsize=20)
+plt.title("Prediction vs. Ground Truth", fontsize=20)
 plt.xticks(fontsize=16)
 plt.yticks(fontsize=16)
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth_noerrorbars.png'))
-plt.close()
+# Calculate RMSE (Root Mean Squared Error) and MAE (Mean Absolute Error) for x_valid and y_valid
+def calculate_rmse(y_true, y_pred):
+    # Compute Root Mean Squared Error
+    return np.sqrt(np.mean((y_true - y_pred) ** 2))
+
+def calculate_mae(y_true, y_pred):
+    # Compute Mean Absolute Error
+    return np.mean(np.abs(y_true - y_pred))
+
+rmse = calculate_rmse(x_valid, y_valid)
+mae = calculate_mae(x_valid, y_valid)
+
+print(f"RMSE between ground truth and prediction: {rmse:.6f}")
+print(f"MAE between ground truth and prediction: {mae:.6f}")
+
 # Optionally, display the results
 # print(target_variables.select(cols_to_show))
 plt.figure(figsize=(8, 8))
@@ -302,7 +329,7 @@ plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
 plt.ylabel("Prediction(machine learning)", fontsize=18)
 plt.xlim(-0, 0.2)
 plt.ylim(-0, 0.2)
-plt.title("Predicted vs. Truth (Processed)", fontsize=20)
+plt.title("Prediction vs. Truth (Processed)", fontsize=20)
 plt.xticks(fontsize=16)
 plt.yticks(fontsize=16)
 plt.grid(True)

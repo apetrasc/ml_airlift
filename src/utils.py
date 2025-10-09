@@ -2,6 +2,9 @@ import numpy as np
 import torch
 from scipy.signal import hilbert
 import matplotlib.pyplot as plt
+import yaml
+import os
+
 
 def hilbert_cuda(img_data_torch, device):
             """
@@ -100,8 +103,6 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
         x_test_tensor_cnn = x_test_tensor_cnn.to(device)
         predictions = model(x_test_tensor_cnn)
         mean, var = torch.mean(predictions), torch.var(predictions)
-        #print(f"predictions.shape: {predictions.shape}")
-        #print(predictions)
         print(f"mean: {mean}, var: {var}")
         # Release memory after computation
         del predictions
