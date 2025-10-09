@@ -84,6 +84,42 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
     #npz2png(file_path=path,save_path=output_folder_path,full=True,pulse_index=2)
     #print(f"max: {np.max(x_raw)}")
     #x_test = np.abs(hilbert(x_raw))
+    x_test_tensor_cnn = preprocess(path=path, device=device, 
+                                   filter_freq=filter_freq, 
+                                   rolling_window=rolling_window, 
+                                   window_size=window_size, 
+                                   window_stride=window_stride, 
+                                   if_log1p=if_log1p,if_hilbert=if_hilbert,
+                                   if_reduce=if_reduce,x_liquid_only=x_liquid_only,
+                                   if_drawsignal=if_drawsignal,png_save_dir=png_save_dir,
+                                   png_name=png_name,fs=fs,x_test=x_test)
+    #print(x_test_tensor_cnn[plot_index,0,:].shape)
+    # Model prediction
+    model.eval()
+    with torch.no_grad():
+        x_test_tensor_cnn = x_test_tensor_cnn.to(device)
+        predictions = model(x_test_tensor_cnn)
+        mean, var = torch.mean(predictions), torch.var(predictions)
+        #print(f"predictions.shape: {predictions.shape}")
+        #print(predictions)
+        print(f"mean: {mean}, var: {var}")
+        # Release memory after computation
+        del predictions
+        torch.cuda.empty_cache()
+    return mean, var
+
+def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9], 
+               rolling_window=False, window_size=20,
+                window_stride=10, if_log1p=True, if_hilbert=True,
+                if_reduce=False, x_liquid_only=None, 
+                if_drawsignal=False, png_save_dir=None,
+                png_name=None,
+               fs=None, x_test=None):
+    import numpy as np
+    import torch
+    import matplotlib.pyplot as plt
+    import polars as pl
+    import os
     x_tmp = x_test.copy()
     x_test=filter_signal(filter_freq, x_tmp, fs)
     if if_hilbert:
@@ -151,25 +187,13 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
         plt.ylabel("Amplitude")
         plt.grid(True)
         plt.tight_layout()
+        plt.legend()
         if png_save_dir!=None:
             base_filename = os.path.splitext(os.path.basename(path))[0]
             plt.savefig(os.path.join(png_save_dir,f'{base_filename}_{png_name}.png'))
         #plt.show()
         plt.close()
-    #print(x_test_tensor_cnn[plot_index,0,:].shape)
-    # Model prediction
-    model.eval()
-    with torch.no_grad():
-        x_test_tensor_cnn = x_test_tensor_cnn.to(device)
-        predictions = model(x_test_tensor_cnn)
-        mean, var = torch.mean(predictions), torch.var(predictions)
-        #print(f"predictions.shape: {predictions.shape}")
-        #print(predictions)
-        print(f"mean: {mean}, var: {var}")
-        # Release memory after computation
-        del predictions
-        torch.cuda.empty_cache()
-    return mean, var
+    return x_test_tensor_cnn
 
 def rolling_window_signal(rolling_window, window_size, window_stride, np, pl, x_test):
     if rolling_window:
@@ -188,7 +212,6 @@ def rolling_window_signal(rolling_window, window_size, window_stride, np, pl, x_
     return x_test
 
 def filter_signal(filter_freq, x_raw, fs, device='cuda:0'):
-    from scipy import signal
     min_freq = filter_freq[0]
     max_freq = filter_freq[1]
     x_size = x_raw.shape[1]
@@ -198,18 +221,22 @@ def filter_signal(filter_freq, x_raw, fs, device='cuda:0'):
     Xf = torch.fft.fft(x_tensor,dim=1)
     #print(f'Xf shape: {Xf.shape}')
     min_freq_idx = int(x_size*min_freq/fs)
-    Xf[:,0:min_freq_idx]=0
     #print(f'min freq index: {min_freq_idx}')
     #print(f'Xf shape: {Xf.shape}')
     max_freq_idx = np.min([x_size*max_freq/fs, x_size//2-1])
     max_freq_idx = int(max_freq_idx)
-    #print(f'max freq index: {max_freq_idx}')
-    Xf[:,max_freq_idx:]=0
-    #print(f'Xf shape: {Xf.shape}')
-    x_tensor_new = torch.fft.ifft(Xf,dim=1)
-    #print(f'x_tensor_new shape: {x_tensor_new.shape}')
-    x_tensor_new = torch.real(x_tensor_new)
-    return x_tensor_new.cpu().numpy()
+    if min_freq_idx!=0 or max_freq_idx<x_size//2:
+        #print(f'max freq index: {max_freq_idx}')
+        Xf = torch.fft.fft(x_tensor,dim=1)
+        Xf[:,0:min_freq_idx]=0
+        Xf[:,max_freq_idx:x_size//2]=0
+        #print(f'Xf shape: {Xf.shape}')
+        x_tensor_new = torch.fft.ifft(Xf,dim=1)
+        #print(f'x_tensor_new shape: {x_tensor_new.shape}')
+        x_tensor_new = torch.real(x_tensor_new)
+        return x_tensor_new.cpu().numpy()
+    else:
+        return x_raw
 
 def preprocess_liquidonly(path, plot_index=80, device='cuda:0',
                            filter_freq=[0, 1.0e9],
@@ -282,3 +309,12 @@ def preprocess_liquidonly(path, plot_index=80, device='cuda:0',
     x_test = x_test_tensor_1d.cpu().numpy()
     print(f'liquid only xtest shape: {x_test.shape}')
     return x_test
+
+def fft_analysis_and_png(path=None, device='cuda:0', 
+                         png_save_dir=None, 
+                        fs=None, x_test=None,
+                        window_type='Blackman'):
+    n_samples = x_test.shape[1]
+    x_torch = torch.from_numpy(x_test).float()
+    x_torch = x_torch.to(device)
+    
