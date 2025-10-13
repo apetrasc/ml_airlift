@@ -295,3 +295,14 @@ def debug_pipeline(base_dir, config_path, file_path):
     plt.savefig(save_debug)
     plt.close()
     print(f"DEBUG: saved x_debug_{filename}.png")
+
+
+def get_valid_data(x, y, yerr):
+    """
+    Remove NaN values from x, y, and yerr, and return only valid data.
+    """
+    mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(yerr)
+    x_valid = x[mask]
+    y_valid = y[mask]
+    yerr_valid = yerr[mask]
+    return x_valid, y_valid, yerr_valid
