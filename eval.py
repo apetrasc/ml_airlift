@@ -216,18 +216,6 @@ y_stone = y[is_str == 1]
 yerr = target_variables["var"].to_numpy() ** 0.5
 yerr_stone = yerr[is_str == 1]
 
-#  Calculate the correlation coefficient between x and y
-# Remove any NaN values before calculation
-# x, y, yerr からNaNを除外した有効なデータのみを抽出
-def get_valid_data(x, y, yerr):
-    """
-    Remove NaN values from x, y, and yerr, and return only valid data.
-    """
-    mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(yerr)
-    x_valid = x[mask]
-    y_valid = y[mask]
-    yerr_valid = yerr[mask]
-    return x_valid, y_valid, yerr_valid
 
 x_valid, y_valid, yerr_valid = get_valid_data(x, y, yerr)
 
@@ -256,6 +244,24 @@ if len(x_valid) > 1:
 else:
     print("Not enough valid data to calculate correlation coefficient.")
 
+x_valid_stone, y_valid_stone_plot, yerr_valid_stone_plot = get_valid_data(x[is_str == 1], y_stone, yerr_stone)
+
+
+def calculate_rmse(y_true, y_pred):
+    return np.sqrt(np.mean((y_true - y_pred) ** 2))
+def calculate_mae(y_true, y_pred):
+    return np.mean(np.abs(y_true - y_pred))
+def RelativeError(y_true, y_pred):
+    return np.mean(np.abs(y_true - y_pred) / (y_true + 1e-7))
+
+rmse = calculate_rmse(x_valid, y_valid)
+mae = calculate_mae(x_valid, y_valid)
+relative_error = RelativeError(x_valid, y_valid)
+relative_error_stone = RelativeError(x_valid_stone, y_valid_stone_plot)
+print(f"RMSE between ground truth and prediction: {rmse:.6f}")
+print(f"MAE between ground truth and prediction: {mae:.6f}")
+print(f"Relative Error between ground truth and prediction: {relative_error:.6f}")
+print(f"Relative Error between ground truth and prediction (stone): {relative_error_stone:.6f}")
 plt.figure(figsize=(8, 8))
 plt.errorbar(
     x_valid, y_valid, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3, label='All'
@@ -279,7 +285,7 @@ plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth.png'))
 plt.close()
 
 
-x_valid_stone, y_valid_stone_plot, yerr_valid_stone_plot = get_valid_data(x[is_str == 1], y_stone, yerr_stone)
+
 
 plt.figure(figsize=(8, 8))
 #plt.errorbar(x_valid, y_valid, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3, label='All')
@@ -298,20 +304,6 @@ plt.yticks(fontsize=16)
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth_noerrorbars.png'))
-# Calculate RMSE (Root Mean Squared Error) and MAE (Mean Absolute Error) for x_valid and y_valid
-def calculate_rmse(y_true, y_pred):
-    # Compute Root Mean Squared Error
-    return np.sqrt(np.mean((y_true - y_pred) ** 2))
-
-def calculate_mae(y_true, y_pred):
-    # Compute Mean Absolute Error
-    return np.mean(np.abs(y_true - y_pred))
-
-rmse = calculate_rmse(x_valid, y_valid)
-mae = calculate_mae(x_valid, y_valid)
-
-print(f"RMSE between ground truth and prediction: {rmse:.6f}")
-print(f"MAE between ground truth and prediction: {mae:.6f}")
 
 # Optionally, display the results
 # print(target_variables.select(cols_to_show))

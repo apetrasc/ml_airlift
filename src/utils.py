@@ -487,11 +487,13 @@ def debug_pipeline(base_dir, config_path, file_path):
     plt.close()
     print(f"DEBUG: saved x_debug_{filename}.png")
 
-def fft_analysis_and_png(path=None, device='cuda:0', 
-                         png_save_dir=None, 
-                        fs=None, x_test=None,
-                        window_type='Blackman'):
-    n_samples = x_test.shape[1]
-    x_torch = torch.from_numpy(x_test).float()
-    x_torch = x_torch.to(device)
-    
+
+def get_valid_data(x, y, yerr):
+    """
+    Remove NaN values from x, y, and yerr, and return only valid data.
+    """
+    mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(yerr)
+    x_valid = x[mask]
+    y_valid = y[mask]
+    yerr_valid = yerr[mask]
+    return x_valid, y_valid, yerr_valid
