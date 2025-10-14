@@ -12,6 +12,8 @@ import argparse
 with open('config/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
 
+dataset_dir = '/mnt/sdb/yyamaguchi/psdata2matlab/simulation/dataset'
+device = config["training"]["device"]
 
 
 # Load the trained model
@@ -35,6 +37,31 @@ model.load_state_dict(
     )
 )
 model.eval()
-file_path = "/home/apetr/Documents/processed_files/P20241021-1008_processed.npz"
-mean, var = preprocess_and_predict(file_path, model)
-print(f"mean: {mean}, var: {var}")
+
+x_train_path = os.path.join(dataset_dir,'x_train.npy')
+t_train_path = os.path.join(dataset_dir,'t_train.npy')
+
+x_train = np.load(x_train_path)
+t_train = np.load(t_train_path)
+eval_result = []
+for x_train_signal in x_train:
+    model.eval()
+    with torch.no_grad():
+        x_test_tensor_cnn = torch.from_numpy(x_train_signal).float()
+        x_test_tensor_cnn = x_test_tensor_cnn.to(device)
+        prediction = model(x_test_tensor_cnn)
+        eval_result.append(prediction)
+        del prediction
+        torch.cuda.empty_cache
+
+plt.fugyre(figsize=(8,8))
+plt.rcParams["font.size"] = 18
+plt.plot(t_train, eval_result, 'o',color='blue',label='glass beads')
+plt.plot([0,1],[0,1],'r--',label='Ideal (y=x)')
+plt.xlabel("Ground Truth")
+plt.ylabel("Prediction")
+plt.xlim(0,0.2)
+plt.ylim(0,0.2)
+plt.tight_layout()
+plt.legend()
+plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth_sim2sim.png'))

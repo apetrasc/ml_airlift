@@ -140,7 +140,6 @@ for row in target_variables.iter_rows(named=True):
     if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/P20241015-1037_processed.npz":
         print("DEBUG: File path matches exactly:", file_path)
         print("DEBUG: File exists:", os.path.exists(file_path))
-    if os.path.exists(file_path) and row["気相体積率"]==0:
     
     
     if os.path.exists(file_path):
