@@ -1,5 +1,5 @@
 import polars as pl
-from src import preprocess_and_predict, preprocess, debug_pipeline, get_valid_data
+from src import preprocess_and_predict, preprocess, debug_pipeline,preprocess_liquidonly
 from models import SimpleCNN, SimpleViTRegressor, ResidualCNN, BaseCNN, ProposedCNN
 import torch
 import numpy as np
@@ -8,9 +8,12 @@ import os
 import yaml
 import math
 import argparse
+import sys
 # Load configuration from YAML file
 with open('config/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
+
+png_save_dir = config['evaluation']['png_save_dir']
 
 # Read the target variables CSV file (experiment metadata)
 target_variables = pl.read_csv(
@@ -30,7 +33,48 @@ model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluati
 
 parser = argparse.ArgumentParser(description="Run evaluation with specified base directory (datetime).")
 parser.add_argument('--datetime', type=str, required=True, help='Base directory for evaluation (e.g., /home/smatsubara/documents/airlift/data/outputs/2025-09-07/14-39-46)')
+parser.add_argument('--bandpass', nargs=2, type=float, required=False, help=
+                    'Low Freq, High Freq. The unit is [MHz]')
+parser.add_argument('--log1p', type=int, required=False, default=0,
+                    help='If applying log1p')
+parser.add_argument('--rolling', type=int, required=False, default=0,
+                    help='If applying maximum rolling windows')
+parser.add_argument('--rollingparam', nargs=2, type=int, required=False,
+                    help='Window Size, Stride')
+parser.add_argument('--hilbert', type=int, required=False,default=1,
+                    help='If applying hilbert envelope')
+parser.add_argument('--reduce', type=int, required=False, default=0,
+                    help='If reducing signals by liquidonly ones')
+parser.add_argument('--drawsignal', type=int, required=False, default=0,
+                    help='If drawing signals')
+parser.add_argument('--pngname', type=str, required=False, default='eval',
+                    help='Name of png')
 args = parser.parse_args()
+
+if args.bandpass:
+    low_freq = args.bandpass[0]*1e6
+    high_freq = args.bandpass[1]*1e6
+    if low_freq > high_freq:
+        sys.exit('The first argument should be smaller than the second one!')
+else:
+    low_freq=0
+    high_freq=1.0e9
+
+if_log1p = args.log1p
+if_rolling = args.rolling
+if_hilbert = args.hilbert
+if_reduce = args.reduce
+if_drawsignal = args.drawsignal
+png_name = args.pngname
+window_size = 0
+window_stride = 0
+
+if if_rolling:
+    if args.rollingparam:
+        window_size = args.rollingparam[0]
+        window_stride = args.rollingparam[1]
+    else:
+        sys.exit('You need rollingparam in the argument.')
 
 base_dir = args.datetime
 model_path = os.path.join(base_dir + '/weights/model.pth')
@@ -62,23 +106,40 @@ cols_to_show = [col for col in target_variables.columns[2:] if col != "NAME"] + 
 
 # Add a new column "FullPath" that contains the full path to the corresponding processed .npz file
 processed_dir = config['evaluation']['processed_dir']
-#processed_dir_stone = config['evaluation']['processed_dir_stone']
 target_variables = target_variables.with_columns(
     (pl.lit(processed_dir + "/") + pl.col("NAME") + pl.lit("_processed.npz")).alias("FullPath")
 )
-# target_variables = target_variables.with_columns(
-#     (pl.lit(processed_dir_stone + "/") + pl.col("NAME") + pl.lit("_processed.npz")).alias("FullPathStone")
-# )
+
+# Get the mean raw signal preprocessed in the same way as solid-liquid signals
+x_liquid_only = None
+if if_reduce:
+    for row in target_variables.iter_rows(named=True):
+        if row["気相体積率"]==0 and row["固相体積率"]==0:
+            file_path = row["FullPath"]
+            x_liquid_only = preprocess_liquidonly(path=file_path,
+                                                filter_freq=[low_freq, high_freq],
+                                                rolling_window=if_rolling,
+                                                window_size=window_size,
+                                                window_stride=window_stride,
+                                                if_hilbert=if_hilbert,
+                                                if_log1p = if_log1p)
+            break
+        
+
+
 
 # For each row, load the processed .npz file, run inference, and add mean and variance as new columns
 mean_list = []
 var_list = []
-mean_list_stone = []
-var_list_stone = []
+
+print(f'if_hilbert: {if_hilbert}')
+
 for row in target_variables.iter_rows(named=True):
     file_path = row["FullPath"]
-    #file_path_stone = row["FullPathStone"]
     # Debug: Check if the file path is exactly as expected
+    if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/P20241015-1037_processed.npz":
+        print("DEBUG: File path matches exactly:", file_path)
+        print("DEBUG: File exists:", os.path.exists(file_path))
     
     
     if os.path.exists(file_path):
@@ -87,11 +148,21 @@ for row in target_variables.iter_rows(named=True):
         if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20240726-1600_processed.npz":
             debug_pipeline(base_dir, 'config/config.yaml', file_path)
         try:
+            mean, var = preprocess_and_predict(path=file_path, model=model,
+                                               filter_freq=[low_freq, high_freq],
+                                               rolling_window=if_rolling,
+                                               window_size=window_size,
+                                               window_stride=window_stride,
+                                               if_hilbert=if_hilbert,
+                                               if_log1p = if_log1p,
+                                               if_reduce = if_reduce,
+                                               x_liquid_only=x_liquid_only,
+                                               if_drawsignal=if_drawsignal,
+                                               png_save_dir=png_save_dir,
+                                               png_name=png_name)
             mean, var = preprocess_and_predict(file_path, model, device=config['evaluation']['device'])
             mean_list.append(mean)
             var_list.append(var)
-            # mean_list_stone.append(mean_stone)
-            # var_list_stone.append(var_stone)
         except Exception as e:
             # Even if the file exists, an error occurred during preprocess_and_predict.
             # The most common reasons are:
@@ -105,24 +176,17 @@ for row in target_variables.iter_rows(named=True):
             print("Exception message:", str(e))
             mean_list.append(None)
             var_list.append(None)
-            # mean_list_stone.append(None)
-            # var_list_stone.append(None)
     else:
         mean_list.append(None)
         var_list.append(None)
-        # mean_list_stone.append(None)
-        # var_list_stone.append(None)
 
 # Add the mean and variance as new columns (float or None only)
 target_variables = target_variables.with_columns([
     pl.Series("mean", mean_list, dtype=pl.Float64),
-    pl.Series("var", var_list, dtype=pl.Float64),
-    # pl.Series("mean_stone", mean_list_stone, dtype=pl.Float64),
-    # pl.Series("var_stone", var_list_stone, dtype=pl.Float64)
+    pl.Series("var", var_list, dtype=pl.Float64)
 ])
 
 # Adjust the column order so that "mean" and "var" come right after "FullPath"
-#cols_to_show = [col for col in target_variables.columns[2:] if col not in ["NAME", "FullPath", "mean", "var", "mean_stone", "var_stone"]] + ["NAME", "FullPath", "mean", "var", "mean_stone", "var_stone"]
 cols_to_show = [col for col in target_variables.columns[2:] if col not in ["NAME", "FullPath", "mean", "var"]] + ["NAME", "FullPath", "mean", "var"]
 
 # Save the results to a CSV file
@@ -139,7 +203,6 @@ target_variables = pl.read_csv(
 )
 print(target_variables.head())
 
-
 glass_diameter_col = target_variables["ガラス球直径"]
 
 is_str = np.array([1 if isinstance(v, str) and not v.replace('.', '', 1).isdigit() else 0 for v in glass_diameter_col.to_numpy()])
@@ -155,7 +218,6 @@ yerr_stone = yerr[is_str == 1]
 
 
 x_valid, y_valid, yerr_valid = get_valid_data(x, y, yerr)
-# x_valid_stone, y_valid_stone, yerr_valid_stone = get_valid_data(x, y_stone, yerr_stone)
 
 print(y_valid)
 # print(np.max(y_processed))
@@ -266,4 +328,3 @@ plt.tight_layout()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_truth_processed.png'))
 plt.close()
 print("saved all figures")
-

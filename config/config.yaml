@@ -7,18 +7,20 @@ hyperparameters:
   l1_lambda: 1.0e-7
   l2_lambda: 1.0e-7
 dataset:
-  x_train: /home/smatsubara/documents/airlift/data/simulation/dataset/x_train.npy
-  t_train: /home/smatsubara/documents/airlift/data/simulation/dataset/t_train.npy
+  x_train: /mnt/sdb/yyamaguchi/psdata2matlab/simulation2d/dataset/x_train.npy
+  t_train: /mnt/sdb/yyamaguchi/psdata2matlab/simulation2d/dataset/t_train.npy
+  log_path: /mnt/sdb/yyamaguchi/psdata2matlab/output
 training:
-  device: cuda:1
-evaluation:
-  target_variables_path: /home/smatsubara/documents/airlift/data/experiments/target_valiables.csv
-  processed_dir: /home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid
-  save_csv_path: /home/smatsubara/documents/airlift/data/outputs/
   device: cuda:0
-  tmp_path: /home/smatsubara/documents/airlift/data/tmp
-  results_path: /home/smatsubara/documents/airlift/data/results
+evaluation:
+  target_variables_path: /home/user01/Document/yyamaguchi/documents/ml_airlift/documents/target_valiables.csv
+  processed_dir: /mnt/sdb/matsubara/airlift/eval/solid_liquid
+  save_csv_path: /mnt/sdb/yyamaguchi/psdata2matlab/outputs/
+  device: cuda:0
+  tmp_path: /mnt/sdb/yyamaguchi/psdata2matlab/tmp
+  results_path: /mnt/sdb/yyamaguchi/psdata2matlab/outputs/
+  png_save_dir: /mnt/sdb/yyamaguchi/psdata2matlab/preprocessed/
 
 hydra:
     run:
-        dir: /home/smatsubara/documents/airlift/data/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+        dir: /mnt/sdb/yyamaguchi/psdata2matlab/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

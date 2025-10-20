@@ -1,5 +1,5 @@
 import polars as pl
-from src import preprocess_and_predict
+from src import preprocess_and_predict, preprocess
 from models import SimpleCNN, SimpleViTRegressor, ResidualCNN
 import torch
 import numpy as np
@@ -13,8 +13,10 @@ import torch.nn.functional as F
 with open('config/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
 
-base_dir = "/home/smatsubara/documents/airlift/data/results"
-file_path = "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20241007-1401_processed.npz"
+dataset_dir = '/mnt/sdb/yyamaguchi/psdata2matlab/simulation/dataset'
+device = config["evaluation"]["device"]
+
+
 # Load the trained model
 model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 #model = ResidualCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
@@ -25,6 +27,40 @@ model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluati
 parser = argparse.ArgumentParser(description="Run evaluation with specified base directory (datetime).")
 parser.add_argument('--datetime', type=str, required=True, help='Base directory for evaluation (e.g., /home/smatsubara/documents/airlift/data/outputs/2025-09-07/14-39-46)')
 args = parser.parse_args()
+
+base_dir = args.datetime
+model_path = os.path.join(base_dir + '/weights/model.pth')
+model.load_state_dict(
+    torch.load(
+        model_path,
+        map_location=config['evaluation']['device'],
+        weights_only=True,
+    )
+)
+
+
+# x_train_path = os.path.join(dataset_dir,'x_train.npy')
+# t_train_path = os.path.join(dataset_dir,'t_train.npy')
+
+# file_path = os.path.join(dataset_dir,'x_train.npy')
+# x_train = np.load(x_train_path)
+# t_train = np.load(t_train_path)
+# print(f'shape of x_train: {x_train.shape}')
+# eval_result = []
+# x_test_tensor_cnn = torch.from_numpy(x_train).float()
+# x_test_tensor_cnn = x_test_tensor_cnn.unsqueeze(1)
+
+
+expdata_dir = config['evaluation']['processed_dir']
+file_path = os.path.join(expdata_dir, "P20241007-1112_processed.npz")
+x_npz = np.load(file_path)
+x_test = x_npz["processed_data"][:,:,0]
+fs = x_npz["fs"]
+# x_train_cnn = preprocess(file_path, device="cuda:0",
+#                          fs=fs,x_test=x_test)
+x_train_cnn = preprocess(x_test=x_test, device="cuda:0")
+x_train_cnn = x_train_cnn.squeeze(1)
+x_train = x_train_cnn.cpu().numpy()
 
 
 class GradCAM1d:
@@ -72,32 +108,34 @@ class GradCAM1d:
         for handle in self.hook_handles:
             handle.remove()
 
-def preprocess_for_gradcam(file_path, sample_index=500, channel_index=0):
+def preprocess_for_gradcam(x, sample_index=50, channel_index=0):
     """
     1サンプル+1chのみ抽出・正規化→[1,1,L] tensorに
     """
-    data = np.load(file_path)
-    if 'arr_0' in data:
-        x = data['arr_0']
-    else:
-        arr_keys = list(data.keys())
-        if not arr_keys:
-            raise RuntimeError(f"No arrays found in {file_path}")
-        x = data[arr_keys[0]]
-    if x.ndim != 3:
-        raise RuntimeError(f"Expected 3D array, but got shape {x.shape}")
-    N, W, C = x.shape
+    # data = np.load(file_path)
+    # if 'arr_0' in data:
+    #     x = data['arr_0']
+    # else:
+    #     arr_keys = list(data.keys())
+    #     if not arr_keys:
+    #         raise RuntimeError(f"No arrays found in {file_path}")
+    #     x = data[arr_keys[0]]
+    # if x.ndim != 3:
+    #     raise RuntimeError(f"Expected 3D array, but got shape {x.shape}")
+    N, W = x.shape
     if not (0 <= sample_index < N):
         raise RuntimeError(f"Invalid sample_index {sample_index}, N={N}")
-    if not (0 <= channel_index < C):
-        raise RuntimeError(f"Invalid channel_index {channel_index}, C={C}")
-    signal = x[sample_index, :, channel_index]
-    mean = np.mean(signal)
-    std = np.std(signal)
-    std = std if std > 1e-8 else 1e-8
-    signal = (signal - mean) / std
+    # if not (0 <= channel_index < C):
+    #     raise RuntimeError(f"Invalid channel_index {channel_index}, C={C}")
+    # signal = x[sample_index, :, channel_index]
+    signal = x[sample_index, :]
+    # mean = np.mean(signal)
+    # std = np.std(signal)
+    # std = std if std > 1e-8 else 1e-8
+    # signal = (signal - mean) / std
     signal = torch.tensor(signal, dtype=torch.float32)
     signal = signal.unsqueeze(0).unsqueeze(0)  # [1, 1, L]
+    print(f'shape of signal {signal.shape}')
     return signal
 
 # ----------- Grad-CAM 実行スクリプト -----------
@@ -117,8 +155,8 @@ if target_layer is None:
 
 gradcam_output_dir = os.path.join(base_dir, "gradcam_outputs")
 input_tensor = preprocess_for_gradcam(
-    file_path,
-    sample_index=5000,
+    x_train,
+    sample_index=1000,
     channel_index=0
 )
 gradcam = GradCAM1d(model, target_layer)
@@ -134,18 +172,28 @@ plt.xlabel('Time Axis')
 plt.ylabel('Grad-CAM Intensity')
 plt.grid(True)
 plt.tight_layout()
-plt.savefig(os.path.join(gradcam_output_dir, f'gradcam_{5000}.png'))
+plt.savefig(os.path.join(gradcam_output_dir, f'gradcam_{1000}_1007-1112.png'))
 plt.close()
 
-base_dir = args.datetime
-model_path = os.path.join(base_dir + '/weights/model.pth')
-model.load_state_dict(
-    torch.load(
-        model_path,
-        map_location=config['evaluation']['device'],
-        weights_only=True,
-    )
-)
-model.eval()
+# model.eval()
+# with torch.no_grad():
+#     x_test_tensor_cnn = x_test_tensor_cnn.to(device)
+#     print(f'shape of x_test_tensor_cnn: {x_test_tensor_cnn.shape}')
+#     prediction = model(x_test_tensor_cnn)
+#     prediction = prediction.cpu().numpy()
+#     eval_result = np.array(prediction)
+#     torch.cuda.empty_cache
 
-mean, var = preprocess_and_predict(file_path, model, device=config['evaluation']['device'])
+# plt.figure(figsize=(8,8))
+# plt.rcParams["font.size"] = 18
+# plt.plot(t_train, eval_result,'o',color='blue',alpha=0.7,label='glass beads')
+# plt.plot([-1,1],[-1,1],'r--',label='Ideal (y=x)')
+# plt.xlabel("Ground Truth")
+# plt.ylabel("Prediction")
+# plt.xlim(-0.05,0.2)
+# plt.ylim(-0.05,0.2)
+# plt.grid(True)
+# plt.gca().set_aspect('equal', adjustable='box')
+# plt.tight_layout()
+# plt.legend()
+# plt.savefig(os.path.join(base_dir, 'predicted_vs_ground_truth_sim2sim_new.png'))
