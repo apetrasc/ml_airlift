@@ -1,0 +1,60 @@
+hyperparameters:
+  learning_rate: 0.001
+  num_epochs: 100
+  batch_size: 8
+  input_length: 2500
+  seed: 42
+  l1_lambda: 1.0e-7
+  l2_lambda: 1.0e-7
+
+# Real data dataset paths
+dataset:
+  x_train: /home/smatsubara/documents/airlift/data/sandbox/results/x_train_real.npz
+  t_train: /home/smatsubara/documents/airlift/data/sandbox/results/t_train_real.npz
+  data_keys:
+    x_key: x_train_real
+    t_key: t_train_real
+
+# Training configuration
+training:
+  device: cuda:0
+  num_workers: 0
+  pin_memory: true
+  max_samples_per_epoch: 108  # Limit samples per epoch for large datasets
+
+# Evaluation configuration
+evaluation:
+  device: cuda:0
+  save_csv_path: /home/smatsubara/documents/airlift/data/outputs_real/
+  tmp_path: /home/smatsubara/documents/airlift/data/tmp
+
+# Optuna configuration
+optuna:
+  n_trials: 10
+  timeout: 1800  # 30 minutes timeout
+  direction: minimize
+  study_name: real_data_optimization
+  storage: sqlite:///optuna_study.db
+
+# MLflow configuration
+mlflow:
+  experiment_name: real_data_experiments
+  tracking_uri: file:/home/smatsubara/documents/airlift/data/outputs_real/mlruns
+  log_artifacts: true
+  log_models: true
+
+# Model configuration
+model:
+  name: SimpleCNN
+  architecture:
+    input_channels: 4
+    hidden_channels: [64, 128, 256]
+    kernel_sizes: [3, 3, 3]
+    dropout_rate: 0.2
+
+# Hydra configuration
+hydra:
+  run:
+    dir: /home/smatsubara/documents/airlift/data/outputs_real/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

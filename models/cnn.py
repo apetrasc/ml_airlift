@@ -53,9 +53,9 @@ class ResidualCNN(nn.Module):
         return x.squeeze(1)  # (batch,)
 
 class SimpleCNN(nn.Module):
-    def __init__(self, input_length):
+    def __init__(self, input_length, input_channels=1, hidden_channels=[64, 128, 256], kernel_sizes=[3, 3, 3], dropout_rate=0.2):
         super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv1d(1, 16, kernel_size=201, padding=100)
+        self.conv1 = nn.Conv1d(input_channels, 16, kernel_size=201, padding=100)
         self.bn1 = nn.BatchNorm1d(16)
         self.relu1 = nn.ReLU()
         self.conv2 = nn.Conv1d(16, 4, kernel_size=201, padding=101)
