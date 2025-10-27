@@ -17,7 +17,8 @@ import yaml
 import json
 
 # Import project modules
-from models import SimpleCNN, SimpleViTRegressor, ResidualCNN, ProposedCNN, BaseCNN
+from models import SimpleCNN, ResidualCNN, ProposedCNN, BaseCNN
+# SimpleViTRegressor is not available due to torchvision import issues
 from src import (
     RealDataDataset, 
     create_real_data_dataloader, 
@@ -56,22 +57,30 @@ class RealDataTrainer:
         # Create output directory
         os.makedirs(self.output_dir, exist_ok=True)
         
-        # Initialize MLflow tracker
-        self.mlflow_tracker = MLflowTracker(
-            experiment_name=config['mlflow']['experiment_name'],
-            tracking_uri=config['mlflow']['tracking_uri'],
-            log_artifacts=config['mlflow']['log_artifacts'],
-            log_models=config['mlflow']['log_models']
-        )
+        # Initialize MLflow tracker (if available)
+        if MLflowTracker is not None:
+            self.mlflow_tracker = MLflowTracker(
+                experiment_name=config['mlflow']['experiment_name'],
+                tracking_uri=config['mlflow']['tracking_uri'],
+                log_artifacts=config['mlflow']['log_artifacts'],
+                log_models=config['mlflow']['log_models']
+            )
+        else:
+            self.mlflow_tracker = None
+            logger.warning("MLflowTracker not available - skipping MLflow logging")
         
-        # Initialize Optuna optimizer
-        self.optuna_optimizer = OptunaOptimizer(
-            study_name=config['optuna']['study_name'],
-            storage=config['optuna']['storage'],
-            direction=config['optuna']['direction'],
-            n_trials=config['optuna']['n_trials'],
-            timeout=config['optuna']['timeout']
-        )
+        # Initialize Optuna optimizer (if available)
+        if OptunaOptimizer is not None:
+            self.optuna_optimizer = OptunaOptimizer(
+                study_name=config['optuna']['study_name'],
+                storage=config['optuna']['storage'],
+                direction=config['optuna']['direction'],
+                n_trials=config['optuna']['n_trials'],
+                timeout=config['optuna']['timeout']
+            )
+        else:
+            self.optuna_optimizer = None
+            logger.warning("OptunaOptimizer not available - using default hyperparameters")
         
         logger.info(f"Trainer initialized with device: {self.device}")
         logger.info(f"Output directory: {self.output_dir}")
@@ -95,7 +104,7 @@ class RealDataTrainer:
         if model_name == 'SimpleCNN':
             model = SimpleCNN(input_length, **model_params)
         elif model_name == 'SimpleViTRegressor':
-            model = SimpleViTRegressor(input_length, **model_params)
+            raise ValueError("SimpleViTRegressor is not available due to torchvision import issues")
         elif model_name == 'ResidualCNN':
             model = ResidualCNN(input_length, **model_params)
         elif model_name == 'ProposedCNN':
@@ -142,6 +151,10 @@ class RealDataTrainer:
         """
         model = model.to(self.device)
         
+        # Use half precision if available
+        if self.device.type == 'cuda':
+            model = model.half()
+        
         # Setup optimizer and loss
         optimizer = optim.Adam(
             model.parameters(),
@@ -162,10 +175,14 @@ class RealDataTrainer:
             # Training
             model.train()
             train_loss = 0.0
-            for batch_x, batch_y in train_dataloader:
+            for batch_idx, (batch_x, batch_y) in enumerate(train_dataloader):
                 # Move batch to GPU
                 batch_x = batch_x.to(self.device, non_blocking=True)
                 batch_y = batch_y.to(self.device, non_blocking=True)
+                
+                # Use half precision if available
+                if self.device.type == 'cuda':
+                    batch_x = batch_x.half()
                 
                 optimizer.zero_grad()
                 outputs = model(batch_x)
@@ -181,9 +198,14 @@ class RealDataTrainer:
                 optimizer.step()
                 train_loss += loss.item()
                 
+                # Log progress every 10 batches
+                if batch_idx % 10 == 0:
+                    logger.info(f"Epoch {epoch+1}, Batch {batch_idx}/{len(train_dataloader)}, Loss: {loss.item():.6f}")
+                
                 # Clear GPU memory after each batch
                 del batch_x, batch_y, outputs, loss
-                torch.cuda.empty_cache()
+                if batch_idx % 50 == 0:  # Clear cache every 50 batches
+                    torch.cuda.empty_cache()
             
             train_loss /= len(train_dataloader)
             train_losses.append(train_loss)
@@ -195,10 +217,15 @@ class RealDataTrainer:
             val_targets = []
             
             with torch.no_grad():
-                for val_x, val_y in val_dataloader:
+                for batch_idx, (val_x, val_y) in enumerate(val_dataloader):
                     # Move batch to GPU
                     val_x = val_x.to(self.device, non_blocking=True)
                     val_y = val_y.to(self.device, non_blocking=True)
+                    
+                    # Use half precision if available
+                    if self.device.type == 'cuda':
+                        val_x = val_x.half()
+                    
                     outputs = model(val_x)
                     loss = criterion(outputs, val_y)
                     val_loss += loss.item()
@@ -210,7 +237,8 @@ class RealDataTrainer:
                     
                     # Clear GPU memory after each batch
                     del val_x, val_y, outputs, loss
-                    torch.cuda.empty_cache()
+                    if batch_idx % 20 == 0:  # Clear cache every 20 batches
+                        torch.cuda.empty_cache()
             
             val_loss /= len(val_dataloader)
             val_losses.append(val_loss)
@@ -256,7 +284,7 @@ class RealDataTrainer:
         val_dataloader: torch.utils.data.DataLoader
     ) -> Dict[str, Any]:
         """
-        Optimize hyperparameters using Optuna.
+        Optimize hyperparameters using Optuna (if available).
         
         Args:
             train_dataloader: Training data loader
@@ -265,6 +293,10 @@ class RealDataTrainer:
         Returns:
             Best hyperparameters
         """
+        if self.optuna_optimizer is None:
+            logger.info("Optuna not available - using default hyperparameters")
+            return self.config['hyperparameters']
+        
         logger.info("Starting hyperparameter optimization...")
         
         # Run optimization
@@ -388,54 +420,58 @@ class RealDataTrainer:
         
         logger.info(f"Created dataloaders: {len(train_dataloader)} train batches, {len(val_dataloader)} val batches")
         
-        # Start MLflow run
-        self.mlflow_tracker.start_run(
-            run_name=f"real_data_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            tags={
-                "dataset": "real_data",
-                "model": self.config['model']['name'],
-                "optimization": "optuna"
-            }
-        )
+        # Start MLflow run (if available)
+        if self.mlflow_tracker is not None:
+            self.mlflow_tracker.start_run(
+                run_name=f"real_data_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                tags={
+                    "dataset": "real_data",
+                    "model": self.config['model']['name'],
+                    "optimization": "optuna" if self.optuna_optimizer is not None else "default"
+                }
+            )
         
         try:
-            # Log configuration and dataset info
-            self.mlflow_tracker.log_parameters(self.config['hyperparameters'])
-            self.mlflow_tracker.log_parameters(self.config['model'])
-            self.mlflow_tracker.log_dataset_info(dataset_info)
+            # Log configuration and dataset info (if MLflow available)
+            if self.mlflow_tracker is not None:
+                self.mlflow_tracker.log_parameters(self.config['hyperparameters'])
+                self.mlflow_tracker.log_parameters(self.config['model'])
+                self.mlflow_tracker.log_dataset_info(dataset_info)
             
             # Optimize hyperparameters
             best_params = self.optimize_hyperparameters(train_dataloader, val_dataloader)
             
-            # Log optimization results
-            optimization_results = {
-                'best_params': best_params,
-                'best_value': self.optuna_optimizer.get_best_value(),
-                'n_trials': self.optuna_optimizer.n_trials
-            }
-            self.mlflow_tracker.log_optimization_results(optimization_results)
+            # Log optimization results (if MLflow available)
+            if self.mlflow_tracker is not None and self.optuna_optimizer is not None:
+                optimization_results = {
+                    'best_params': best_params,
+                    'best_value': self.optuna_optimizer.get_best_value(),
+                    'n_trials': self.optuna_optimizer.n_trials
+                }
+                self.mlflow_tracker.log_optimization_results(optimization_results)
             
             # Train final model
             final_model, training_results = self.train_final_model(
                 best_params, train_dataloader, val_dataloader
             )
             
-            # Log final metrics
-            self.mlflow_tracker.log_metrics(training_results['metrics'])
-            self.mlflow_tracker.log_training_history(
-                training_results['train_losses'],
-                training_results['val_losses']
-            )
-            
-            # Log model
-            self.mlflow_tracker.log_model(
-                final_model,
-                model_name="final_model",
-                registered_model_name=f"real_data_{self.config['model']['name']}"
-            )
-            
-            # Log artifacts
-            self.mlflow_tracker.log_artifacts(self.output_dir, "training_outputs")
+            # Log final metrics (if MLflow available)
+            if self.mlflow_tracker is not None:
+                self.mlflow_tracker.log_metrics(training_results['metrics'])
+                self.mlflow_tracker.log_training_history(
+                    training_results['train_losses'],
+                    training_results['val_losses']
+                )
+                
+                # Log model
+                self.mlflow_tracker.log_model(
+                    final_model,
+                    model_name="final_model",
+                    registered_model_name=f"real_data_{self.config['model']['name']}"
+                )
+                
+                # Log artifacts
+                self.mlflow_tracker.log_artifacts(self.output_dir, "training_outputs")
             
             logger.info("Training pipeline completed successfully")
             
@@ -448,8 +484,9 @@ class RealDataTrainer:
             }
             
         finally:
-            # End MLflow run
-            self.mlflow_tracker.end_run()
+            # End MLflow run (if available)
+            if self.mlflow_tracker is not None:
+                self.mlflow_tracker.end_run()
 
 
 def main():

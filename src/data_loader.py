@@ -511,15 +511,21 @@ def setup_cuda_memory_optimization():
     import os
     import torch
     
-    # Set environment variables for CUDA memory optimization
-    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+    # Set environment variables for CUDA memory optimization (only if supported)
+    try:
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+    except:
+        pass  # Ignore if not supported
     
     if torch.cuda.is_available():
         # Clear cache
         torch.cuda.empty_cache()
         
-        # Set memory fraction to avoid OOM
-        torch.cuda.set_per_process_memory_fraction(0.8)  # Use only 80% of GPU memory
+        # Set memory fraction to avoid OOM (only if not already set)
+        try:
+            torch.cuda.set_per_process_memory_fraction(0.8)  # Use only 80% of GPU memory
+        except:
+            pass  # Ignore if already set or not supported
         
         # Enable memory efficient attention if available
         try:

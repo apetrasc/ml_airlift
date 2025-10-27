@@ -1,7 +1,7 @@
 hyperparameters:
-  learning_rate: 0.001
-  num_epochs: 100
-  batch_size: 8
+  learning_rate: 0.0001
+  num_epochs: 50  # Reduced for testing
+  batch_size: 1   # Small batch size for memory efficiency
   input_length: 2500
   seed: 42
   l1_lambda: 1.0e-7
@@ -19,8 +19,8 @@ dataset:
 training:
   device: cuda:0
   num_workers: 0
-  pin_memory: true
-  max_samples_per_epoch: 108  # Limit samples per epoch for large datasets
+  pin_memory: false  # Disable for memory efficiency
+  max_samples_per_epoch: 20  # Limit samples for testing
 
 # Evaluation configuration
 evaluation:
@@ -30,8 +30,8 @@ evaluation:
 
 # Optuna configuration
 optuna:
-  n_trials: 10
-  timeout: 1800  # 30 minutes timeout
+  n_trials: 3  # Reduced for testing
+  timeout: 600  # 10 minutes timeout
   direction: minimize
   study_name: real_data_optimization
   storage: sqlite:///optuna_study.db
