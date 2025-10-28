@@ -1,6 +1,6 @@
 hyperparameters:
   learning_rate: 0.001
-  num_epochs: 800
+  num_epochs: 700
   batch_size: 16
   input_length: 2500
   seed: 93

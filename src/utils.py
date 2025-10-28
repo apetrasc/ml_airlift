@@ -34,7 +34,8 @@ def preprocess(x_raw, device):
     # Add channel dimension: (batch, 1, length, channel)
     x_test_tensor_all = x_test_tensor.unsqueeze(1)
     # Normalize each (length, channel) column for each sample in the batch
-    max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]
+    c=0.4
+    max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]+c
     max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
     x_test_tensor_all = x_test_tensor_all / max_values_per_column
 

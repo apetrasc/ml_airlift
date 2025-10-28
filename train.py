@@ -74,14 +74,32 @@ def main(cfg):
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     size = cfg.hyperparameters.input_length
+    # Load pretrained weights and fine-tune only the last layer (fc)
     model = SimpleCNN(size).to(device1)
+    # Load pretrained weights (make sure the model definition matches)
+    pretrained_path = "/home/smatsubara/documents/sandbox/ml_airlift/models/layernorm/weights/model.pth"
+    try:
+        state_dict = torch.load(pretrained_path, map_location=device1)
+        model.load_state_dict(state_dict, strict=False)
+    except Exception as e:
+        print(f"Warning: Could not load pretrained weights from {pretrained_path}. Exception: {e}")
+        # Optionally: raise
+
+    # Freeze all parameters except the last fully connected (fc) layer
+    for name, param in model.named_parameters():
+        if '.fc' in name or name.startswith('fc'):
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
+
+    # Now only model.fc will be optimized during training
     #model = ProposedCNN(size).to(device1)
     #model = BaseCNN(size).to(device1)
     #model = ResidualCNN(size).to(device1)
     #model = SimpleViTRegressor(size).to(device1)
-    init.kaiming_normal_(model.conv1.weight, mode='fan_out', nonlinearity='relu')
-    init.xavier_normal_(model.conv2.weight, gain=1.0)
-    init.xavier_normal_(model.fc.weight, gain=1.0)
+    # init.kaiming_normal_(model.conv1.weight, mode='fan_out', nonlinearity='relu')
+    # init.xavier_normal_(model.conv2.weight, gain=1.0)
+    # init.xavier_normal_(model.fc.weight, gain=1.0)
     #init.kaiming_normal_(model.conv2.weight, mode='fan_out', nonlinearity='relu')
     #init.kaiming_normal_(model.fc.weight, mode='fan_out', nonlinearity='relu')
     def relative_sum_loss(pred, target):
@@ -137,9 +155,9 @@ def main(cfg):
     
     os.makedirs(weights_dir, exist_ok=True)
     os.makedirs(logs_dir, exist_ok=True)
-
+    sota_dir="/home/smatsubara/documents/sandbox/ml_airlift/models/layernorm/weights"
+    #torch.save(model.state_dict(), os.path.join(sota_dir, 'model.pth'))
     torch.save(model.state_dict(), os.path.join(weights_dir, 'model.pth'))
-
     plt.figure()
     plt.plot(range(1, num_epochs + 1), [np.log(l) for l in train_loss_history], label='Train Log(Loss)')
     plt.plot(range(1, num_epochs + 1), [np.log(l) for l in val_loss_history], label='Validation Log(Loss)')
@@ -162,6 +180,7 @@ def main(cfg):
     plt.savefig(os.path.join(logs_dir, 'learning_curve.png'))
     plt.close()
 
+    #model.load_state_dict(torch.load(os.path.join(sota_dir, 'model.pth')))
     model.load_state_dict(torch.load(os.path.join(weights_dir, 'model.pth')))
     model = model.to(cfg.evaluation.device)
     model.eval()

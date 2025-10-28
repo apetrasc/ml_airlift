@@ -44,12 +44,19 @@ class SimpleDataLoader:
         return self.max_samples // self.batch_size
     
     def __iter__(self):
-        for i in range(0, self.max_samples, self.batch_size):
-            batch_size = min(self.batch_size, self.max_samples - i)
+        # Load actual data
+        x_data = np.load(self.x_path)
+        t_data = np.load(self.t_path)
+        
+        # Limit samples
+        x_data = x_data[:self.max_samples]
+        t_data = t_data[:self.max_samples]
+        
+        for i in range(0, len(x_data), self.batch_size):
+            end_i = min(i + self.batch_size, len(x_data))
             
-            # Create dummy data for testing
-            x_batch = torch.randn(batch_size, 4, 1400, 2500, dtype=torch.float32)
-            t_batch = torch.randn(batch_size, 6, dtype=torch.float32)
+            x_batch = torch.tensor(x_data[i:end_i], dtype=torch.float32)
+            t_batch = torch.tensor(t_data[i:end_i], dtype=torch.float32)
             
             yield x_batch, t_batch
 
@@ -182,19 +189,19 @@ def main():
         logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
         logger.info(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / (1024**3):.1f} GB")
     
-    # Create data loaders
+    # Create data loaders using cleaned data
     train_loader = SimpleDataLoader(
-        x_path="/home/smatsubara/documents/airlift/data/sandbox/results/x_train_real.npy",
-        t_path="/home/smatsubara/documents/airlift/data/sandbox/results/t_train_real.npy",
+        x_path="/home/smatsubara/documents/airlift/data/cleaned/x_train_split.npy",
+        t_path="/home/smatsubara/documents/airlift/data/cleaned/t_train_split.npy",
         batch_size=4,  # Increased batch size for better stability
-        max_samples=16  # Limit samples for testing
+        max_samples=64  # Use more samples for better training
     )
     
     val_loader = SimpleDataLoader(
-        x_path="/home/smatsubara/documents/airlift/data/sandbox/results/x_train_real.npy",
-        t_path="/home/smatsubara/documents/airlift/data/sandbox/results/t_train_real.npy",
+        x_path="/home/smatsubara/documents/airlift/data/cleaned/x_test_split.npy",
+        t_path="/home/smatsubara/documents/airlift/data/cleaned/t_test_split.npy",
         batch_size=4,
-        max_samples=4
+        max_samples=22  # Use all test samples
     )
     
     logger.info(f"Created loaders: {len(train_loader)} train batches, {len(val_loader)} val batches")
