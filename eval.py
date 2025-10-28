@@ -35,7 +35,7 @@ parser = argparse.ArgumentParser(description="Run evaluation with specified base
 parser.add_argument('--datetime', type=str, required=True, help='Base directory for evaluation (e.g., /home/smatsubara/documents/airlift/data/outputs/2025-09-07/14-39-46)')
 parser.add_argument('--bandpass', nargs=2, type=float, required=False, help=
                     'Low Freq, High Freq. The unit is [MHz]')
-parser.add_argument('--log1p', type=int, required=False, default=0,
+parser.add_argument('--log1p', type=int, required=False, default=1,
                     help='If applying log1p')
 parser.add_argument('--rolling', type=int, required=False, default=0,
                     help='If applying maximum rolling windows')
@@ -132,8 +132,6 @@ if if_reduce:
 mean_list = []
 var_list = []
 
-print(f'if_hilbert: {if_hilbert}')
-
 for row in target_variables.iter_rows(named=True):
     file_path = row["FullPath"]
     # Debug: Check if the file path is exactly as expected
@@ -143,10 +141,10 @@ for row in target_variables.iter_rows(named=True):
     
     
     if os.path.exists(file_path):
-        if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20241011-1015_processed.npz":
-            debug_pipeline(base_dir, 'config/config.yaml', file_path)
-        if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20240726-1600_processed.npz":
-            debug_pipeline(base_dir, 'config/config.yaml', file_path)
+        # if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20241011-1015_processed.npz":
+        #     debug_pipeline(base_dir, 'config/config.yaml', file_path)
+        # if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20240726-1600_processed.npz":
+        #     debug_pipeline(base_dir, 'config/config.yaml', file_path)
         try:
             mean, var = preprocess_and_predict(path=file_path, model=model,
                                                filter_freq=[low_freq, high_freq],
@@ -157,10 +155,10 @@ for row in target_variables.iter_rows(named=True):
                                                if_log1p = if_log1p,
                                                if_reduce = if_reduce,
                                                x_liquid_only=x_liquid_only,
+                                               if_sigmoid=False,
                                                if_drawsignal=if_drawsignal,
                                                png_save_dir=png_save_dir,
                                                png_name=png_name)
-            mean, var = preprocess_and_predict(file_path, model, device=config['evaluation']['device'])
             mean_list.append(mean)
             var_list.append(var)
         except Exception as e:
@@ -203,19 +201,32 @@ target_variables = pl.read_csv(
 )
 print(target_variables.head())
 
+target_variables = target_variables.drop_nulls()
+
 glass_diameter_col = target_variables["ガラス球直径"]
+
+print(target_variables.head())
 
 is_str = np.array([1 if isinstance(v, str) and not v.replace('.', '', 1).isdigit() else 0 for v in glass_diameter_col.to_numpy()])
 print(is_str.shape)
-x = target_variables["固相体積率"].to_numpy()
-y = target_variables["mean"].to_numpy()
+x = target_variables["固相体積率"].to_numpy().astype(np.float32)
+y = target_variables["mean"].to_numpy().astype(np.float32)
 # y_stone = target_variables["mean_stone"].to_numpy()
 y_stone = y[is_str == 1]
 
 
-yerr = target_variables["var"].to_numpy() ** 0.5
+yerr = target_variables["var"].to_numpy().astype(np.float32)
 yerr_stone = yerr[is_str == 1]
 
+def get_valid_data(x, y, yerr):
+    """
+    Remove NaN values from x, y, and yerr, and return only valid data.
+    """
+    mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(yerr)
+    x_valid = x[mask]
+    y_valid = y[mask]
+    yerr_valid = yerr[mask]
+    return x_valid, y_valid, yerr_valid
 
 x_valid, y_valid, yerr_valid = get_valid_data(x, y, yerr)
 

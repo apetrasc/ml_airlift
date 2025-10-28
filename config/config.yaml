@@ -13,8 +13,8 @@ dataset:
 training:
   device: cuda:0
 evaluation:
-  target_variables_path: /home/user01/Document/yyamaguchi/documents/ml_airlift/documents/target_valiables.csv
-  processed_dir: /mnt/sdb/matsubara/airlift/eval/solid_liquid
+  target_variables_path: /mnt/sdb/matsubara/airlift/target_valiables.csv
+  processed_dir: /mnt/sdb/yyamaguchi/psdata2matlab/experiments/processed/solid_liquid
   save_csv_path: /mnt/sdb/yyamaguchi/psdata2matlab/outputs/
   device: cuda:0
   tmp_path: /mnt/sdb/yyamaguchi/psdata2matlab/tmp

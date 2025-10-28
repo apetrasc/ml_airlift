@@ -15,7 +15,7 @@ with open('config/config.yaml', 'r') as f:
 
 dataset_dir = '/mnt/sdb/yyamaguchi/psdata2matlab/simulation/dataset'
 device = config["evaluation"]["device"]
-
+png_save_dir = config['evaluation']['png_save_dir']
 
 # Load the trained model
 model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
@@ -39,28 +39,37 @@ model.load_state_dict(
 )
 
 
-# x_train_path = os.path.join(dataset_dir,'x_train.npy')
-# t_train_path = os.path.join(dataset_dir,'t_train.npy')
+x_train_path = os.path.join(dataset_dir,'x_train.npy')
+t_train_path = os.path.join(dataset_dir,'t_train.npy')
 
-# file_path = os.path.join(dataset_dir,'x_train.npy')
-# x_train = np.load(x_train_path)
-# t_train = np.load(t_train_path)
-# print(f'shape of x_train: {x_train.shape}')
+file_path = os.path.join(dataset_dir,'x_train.npy')
+x_train = np.load(x_train_path)
+t_train = np.load(t_train_path)
+print(f'shape of x_train: {x_train.shape}')
+exp_date =""
+sample_index=77
+fs = 50e6
 # eval_result = []
 # x_test_tensor_cnn = torch.from_numpy(x_train).float()
 # x_test_tensor_cnn = x_test_tensor_cnn.unsqueeze(1)
 
 
-expdata_dir = config['evaluation']['processed_dir']
-file_path = os.path.join(expdata_dir, "P20241007-1112_processed.npz")
-x_npz = np.load(file_path)
-x_test = x_npz["processed_data"][:,:,0]
-fs = x_npz["fs"]
-# x_train_cnn = preprocess(file_path, device="cuda:0",
-#                          fs=fs,x_test=x_test)
-x_train_cnn = preprocess(x_test=x_test, device="cuda:0")
-x_train_cnn = x_train_cnn.squeeze(1)
-x_train = x_train_cnn.cpu().numpy()
+# expdata_dir = "/mnt/sdb/yyamaguchi/psdata2matlab/experiments/processed/solid_liquid"
+# exp_date = "P20241011-1132"
+# file_path = os.path.join(expdata_dir, exp_date+"_processed.npz")
+# x_npz = np.load(file_path)
+# x_test = x_npz["processed_data"][:,:,0]
+# fs = x_npz["fs"]
+# sample_index = 1000
+# # x_train_cnn = preprocess(file_path, device="cuda:0",
+# #                          fs=fs,x_test=x_test)
+# x_train_cnn = preprocess(path=file_path,if_log1p=True,if_hilbert=True,
+#                          x_test=x_test, device="cuda:0",fs=fs,
+#                          if_drawsignal=True,png_save_dir=png_save_dir,
+#                          png_name="new",plot_idx=sample_index)
+# x_train_cnn = x_train_cnn.squeeze(1)
+# x_train = x_train_cnn.cpu().numpy()
+
 
 
 class GradCAM1d:
@@ -156,9 +165,24 @@ if target_layer is None:
 gradcam_output_dir = os.path.join(base_dir, "gradcam_outputs")
 input_tensor = preprocess_for_gradcam(
     x_train,
-    sample_index=1000,
+    sample_index=sample_index,
     channel_index=0
 )
+
+# model.eval()
+# with torch.no_grad():
+#     x_test_tensor_cnn = input_tensor.to(device)
+#     print(f'shape of x_test_tensor_cnn: {x_test_tensor_cnn.shape}')
+#     predictions = model(x_test_tensor_cnn)
+#     predictions_numpy = predictions.cpu().numpy()
+#     mean, var = torch.mean(predictions), torch.var(predictions)
+#     print(f"mean: {mean}, var: {var}")
+#     # Release memory after computation
+#     del predictions
+#     torch.cuda.empty_cache()
+
+# print(f'Predicted Fraction: {mean}')
+
 gradcam = GradCAM1d(model, target_layer)
 grad_cam_map = gradcam(input_tensor)
 gradcam.remove_hooks()
@@ -166,13 +190,20 @@ gradcam.remove_hooks()
 if not os.path.exists(gradcam_output_dir):
     os.makedirs(gradcam_output_dir)
 plt.figure(figsize=(10, 4))
-plt.plot(grad_cam_map)
+plt.rcParams['font.size'] = 16
+n_samples = x_train[sample_index,:].shape[0]
+t = np.arange(n_samples)/fs
+plt.plot(t*1e6, x_train[sample_index,:],
+         color='blue',label='Processed Signal')
+plt.plot(t*1e6,grad_cam_map, color='red', label='Grad-CAM')
+plt.fill_between(t*1e6, grad_cam_map,
+         color='red',alpha=0.1)
 plt.title('Grad-CAM Map for Sample Input (Conv1d)')
-plt.xlabel('Time Axis')
-plt.ylabel('Grad-CAM Intensity')
+plt.xlabel('Time (µs)')
+plt.ylabel('Amplitude')
 plt.grid(True)
 plt.tight_layout()
-plt.savefig(os.path.join(gradcam_output_dir, f'gradcam_{1000}_1007-1112.png'))
+plt.savefig(os.path.join(gradcam_output_dir, f'gradcam{exp_date}_{sample_index}.png'))
 plt.close()
 
 # model.eval()

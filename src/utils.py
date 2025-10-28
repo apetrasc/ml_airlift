@@ -53,6 +53,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
                            rolling_window=False, window_size=20,
                            window_stride=10, if_log1p=True, if_hilbert=True,
                            if_reduce=False, x_liquid_only=None, 
+                           if_sigmoid=False,
                            if_drawsignal=False, png_save_dir=None,
                            png_name=None):
     """
@@ -73,8 +74,10 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
     import matplotlib.pyplot as plt
     import polars as pl
 
+    torch.cuda.empty_cache()
+
     # Load and preprocess data
-    x_raw = np.load(path)["processed_data"][:,:,0]
+    x_raw = np.load(path)["processed_data"][:,:3000,0]
     fs = np.load(path)["fs"]
     print(x_raw.shape)
     print(f'fs:{fs}[Hz]')
@@ -94,6 +97,7 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
                                    window_stride=window_stride, 
                                    if_log1p=if_log1p,if_hilbert=if_hilbert,
                                    if_reduce=if_reduce,x_liquid_only=x_liquid_only,
+                                   if_sigmoid=if_sigmoid,
                                    if_drawsignal=if_drawsignal,png_save_dir=png_save_dir,
                                    png_name=png_name,fs=fs,x_test=x_test)
     #print(x_test_tensor_cnn[plot_index,0,:].shape)
@@ -101,7 +105,9 @@ def preprocess_and_predict(path, model, plot_index=80, device='cuda:0',
     model.eval()
     with torch.no_grad():
         x_test_tensor_cnn = x_test_tensor_cnn.to(device)
+        print(f'shape of x_test_tensor_cnn: {x_test_tensor_cnn.shape}')
         predictions = model(x_test_tensor_cnn)
+        predictions_numpy = predictions.cpu().numpy()
         mean, var = torch.mean(predictions), torch.var(predictions)
         print(f"mean: {mean}, var: {var}")
         # Release memory after computation
@@ -113,15 +119,19 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
                rolling_window=False, window_size=20,
                 window_stride=10, if_log1p=True, if_hilbert=True,
                 if_reduce=False, x_liquid_only=None, 
+                if_sigmoid=False,
                 if_drawsignal=False, png_save_dir=None,
-                png_name=None,
+                png_name=None, plot_idx=1000,
                fs=None, x_test=None):
     import numpy as np
     import torch
     import matplotlib.pyplot as plt
     import polars as pl
     import os
+    from scipy.optimize import curve_fit
+    from scipy import signal
     x_tmp = x_test.copy()
+    x_tmp_for_fft = x_test.copy()
     x_test=filter_signal(filter_freq, x_tmp, fs)
     if if_hilbert:
         print(f'hilbert started')
@@ -137,23 +147,45 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
         x_test = np.nan_to_num(x_test)
     print(f'x_test shape: {x_test.shape}')
     pulse_num = x_test.shape[0]
+    argmax_pipe_ref2 = np.argmax(x_test[1000,:])
+    x_test = x_test[:,argmax_pipe_ref2-200:argmax_pipe_ref2+2300]
+    print(f'argmax {argmax_pipe_ref2}')
     x_test_tensor = torch.from_numpy(x_test).float()
 
     # Add channel dimension: (batch, 1, length, channel)
     x_test_tensor_all = x_test_tensor.unsqueeze(1)
     print(f'x_test_tensor_all shape: {x_test_tensor_all.shape}')
     # Normalize each (length, channel) column for each sample in the batch
-    max_values_per_column = torch.max(torch.abs(x_test_tensor_all), dim=2, keepdim=True)[0]
+    c=0.4
+    max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]+c
     #print(f"max_values_per_column.shape: {max_values_per_column.shape}")
     max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
-    x_test_tensor_all = x_test_tensor_all / max_values_per_column
+    x_test_tensor_all = x_test_tensor_all / (max_values_per_column)
     #print(f"max: {torch.max(x_test_tensor_all)}")
 
     # Use only the first channel for CNN input
     x_test_tensor_cnn = x_test_tensor_all[:, :, :]
     x_test_tensor_cnn = x_test_tensor_cnn.to(device)
+    if if_sigmoid:
+        #x_test_tensor_cnn *= 0.928
+        x_test_nd = x_test_tensor_cnn.cpu().numpy()
+        x_test_sigmoid = sigmoid_fitting(x_test_nd, fs)
+        print('OK1')
+        x_test_sigmoid_plot = x_test_sigmoid[plot_idx,:]
+        x_test_sigmoid = torch.from_numpy(x_test_sigmoid).float()
+        x_test_sigmoid = x_test_sigmoid.to(device)
+        print('OK2')
+        x_test_sigmoid = x_test_sigmoid.unsqueeze(1)
+        max_per_col = torch.max(x_test_sigmoid, dim=2, keepdims=True)[0]
+        print(max_per_col[1000])
+        print('OK3')
+        x_test_tensor_cnn = torch.from_numpy(x_test_nd).float()
+        x_test_tensor_cnn = x_test_tensor_cnn.to(device)
+        x_test_tensor_cnn = x_test_tensor_cnn/max_per_col
+        print('OK4')
     if if_log1p:
         x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
+        #x_test_sigmoid_plot = np.log1p(x_test_sigmoid_plot)
     if if_reduce:
         x_liquid_only_tensor = torch.from_numpy(x_liquid_only).float()
         #print(f'x_liquid_only_tensor shape: {x_liquid_only_tensor.shape}')
@@ -169,21 +201,27 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
     #print(x_test_tensor_cnn.shape)
     print(f"max: {torch.max(x_test_tensor_cnn)}")
     #print(x_test_tensor_cnn)
+
+
+
     # Plot a sample signal
     if if_drawsignal:
-        n_samples = x_test_tensor_cnn[1000, 0,:].cpu().numpy().shape[0]
+        n_samples = x_test_tensor_cnn[plot_idx, 0,:].cpu().numpy().shape[0]
         #print(f'n_samples: {n_samples}')
         t = np.arange(n_samples)/fs
         plt.figure(figsize=(10, 4))
         plt.rcParams["font.size"] = 18
-        plt.plot(t*1e6,x_test_tensor_cnn[1000, 0,:].cpu().numpy(),
+        plt.plot(t*1e6,x_test_tensor_cnn[plot_idx, 0,:].cpu().numpy(),
                  color='blue',label='Processed Signal')
         #print(f'first plot done')
-        if not (if_hilbert or rolling_window):
-            x_test_envelope = hilbert_cuda(x_test_tensor_cnn[:,0,:],device)
-            plt.plot(t*1e6,x_test_envelope[1000,:],
-                     color='red',label='Envelope')
+        # if not (if_hilbert or rolling_window):
+        #     x_test_envelope = hilbert_cuda(x_test_tensor_cnn[:,0,:],device)
+        #     plt.plot(t*1e6,x_test_envelope[1000,:],
+        #              color='red',label='Envelope')
             #print(f'second plot done')
+        if if_sigmoid:
+            plt.plot(t*1e6,x_test_sigmoid_plot,
+                     color='red',label='Sigmoid')
         plt.xlabel("Time (µs)")
         plt.ylabel("Amplitude")
         plt.grid(True)
@@ -194,7 +232,64 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
             plt.savefig(os.path.join(png_save_dir,f'{base_filename}_{png_name}.png'))
         #plt.show()
         plt.close()
+        plt.figure(figsize=(10, 4))
+        freq = np.arange(n_samples//2)*fs/n_samples
+        x_test_for_fft = torch.from_numpy(x_tmp_for_fft[plot_idx,:]).cpu()
+        x_test_fft = torch.abs(torch.fft.fft(x_test_for_fft))
+        x_test_fft = torch.pow(x_test_fft, 2)
+        plt.rcParams["font.size"] = 18
+        plt.plot(freq*1e-6,x_test_fft.cpu().numpy()[:n_samples//2],
+                 color='blue',label='FFT')
+        plt.xlabel("Frequency (MHz)")
+        plt.ylabel("Amplitude")
+        plt.ylim(-0.1*np.max(x_test_fft.cpu().numpy()[40:n_samples//2]), 1.1*np.max(x_test_fft.cpu().numpy()[40:n_samples//2]))
+        plt.grid(True)
+        plt.tight_layout()
+        plt.legend()
+        if png_save_dir!=None:
+            base_filename = os.path.splitext(os.path.basename(path))[0]
+            plt.savefig(os.path.join(png_save_dir,f'{base_filename}_{png_name}_fft.png'))
     return x_test_tensor_cnn
+
+def func_sigmoid(x, a, b, c, cx ,k):
+    import numpy as np
+    if x.shape == ():
+        if int(c*np.abs(x-cx)-k) > 10:
+            return a
+        elif int(c*np.abs(x-cx)-k) < -10:
+            return a+b
+        else:
+            return a+b/(1+np.exp(c*np.abs(x-cx)-k))
+    else:
+        return [func_sigmoid(x0,a,b,c,cx,k) for x0 in x]
+
+def sigmoid_fitting(x_test_all, fs):
+    from scipy.optimize import curve_fit
+    from scipy import signal
+    #x_test: 14000,1,2500
+    n_samples = x_test_all.shape[2]
+    x_test_sigmoid = []
+    x_array=np.arange(n_samples)
+    end_idx=0
+    start_idx = 6e-6*fs
+    count=0
+    for x_test in x_test_all[:,0,:]:
+        argmax_signal = np.argmax(x_test)
+        argrelmin_array = signal.argrelmin(x_test[argmax_signal:])
+        for argrelmin in argrelmin_array[0]:
+            if x_test[argmax_signal+argrelmin]<0.2:
+                end_idx = argrelmin+argmax_signal
+                break
+        x_test_fitting = x_test[:end_idx]
+        x_array_tmp = np.arange(end_idx)
+        popt, pcov = curve_fit(func_sigmoid,x_array_tmp,x_test_fitting,
+                               p0=[0,1,10,300,500])
+        x_sigmoid = func_sigmoid(x_array,popt[0],popt[1],popt[2],popt[3],popt[4])
+        x_test_sigmoid.append(x_sigmoid)
+        count += 1
+        if count%100 == 0:
+            print(f'{count}回目終了')
+    return np.array(x_test_sigmoid)
 
 def rolling_window_signal(rolling_window, window_size, window_stride, np, pl, x_test):
     if rolling_window:
