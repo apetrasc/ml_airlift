@@ -1,479 +1,468 @@
-#!/usr/bin/env python3
-"""
-Evaluation script for real data models.
-Provides comprehensive evaluation metrics and visualization.
-"""
-
+import os
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
-import os
-import logging
-from typing import Dict, Any, List, Tuple
-import matplotlib.pyplot as plt
+from torch.utils.data import TensorDataset, DataLoader
+from models.cnn import SimpleCNNReal, SimpleCNNReal2D
+import argparse
+from src.evaluate_predictions import create_prediction_plots
+import mlflow
+import mlflow.pytorch
+from mlflow.tracking import MlflowClient
 from datetime import datetime
-import yaml
-import json
-import pandas as pd
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from scipy.stats import pearsonr, spearmanr
-
-# Import project modules
-from models import SimpleCNN, SimpleViTRegressor, ResidualCNN, ProposedCNN, BaseCNN
-from src import (
-    RealDataDataset, 
-    create_real_data_dataloader, 
-    get_dataset_info,
-    MLflowTracker
-)
-from src.chunked_loader import create_chunked_dataloader
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 
-class RealDataEvaluator:
-    """
-    Evaluator class for real data models.
-    """
-    
-    def __init__(self, config: Dict[str, Any]):
-        """
-        Initialize the evaluator.
-        
-        Args:
-            config: Configuration dictionary
-        """
-        self.config = config
-        self.device = torch.device(config['evaluation']['device'])
-        self.output_dir = config['evaluation']['save_csv_path']
-        
-        # Create output directory
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-        # Initialize MLflow tracker
-        self.mlflow_tracker = MLflowTracker(
-            experiment_name=config['mlflow']['experiment_name'],
-            tracking_uri=config['mlflow']['tracking_uri'],
-            log_artifacts=config['mlflow']['log_artifacts'],
-            log_models=config['mlflow']['log_models']
-        )
-        
-        logger.info(f"Evaluator initialized with device: {self.device}")
-        logger.info(f"Output directory: {self.output_dir}")
-    
-    def create_model(self, model_params: Dict[str, Any]) -> nn.Module:
-        """
-        Create model based on configuration.
-        
-        Args:
-            model_params: Model parameters
-            
-        Returns:
-            PyTorch model
-        """
-        model_name = self.config['model']['name']
-        input_length = self.config['hyperparameters']['input_length']
-        
-        if model_name == 'SimpleCNN':
-            model = SimpleCNN(input_length)
-        elif model_name == 'SimpleViTRegressor':
-            model = SimpleViTRegressor(input_length)
-        elif model_name == 'ResidualCNN':
-            model = ResidualCNN(input_length)
-        elif model_name == 'ProposedCNN':
-            model = ProposedCNN(input_length)
-        elif model_name == 'BaseCNN':
-            model = BaseCNN(input_length)
+def _load_np_any(path: str, prefer_key: str = None):
+    """Load numpy array from .npy or .npz file."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"file not found: {path}")
+    obj = np.load(path)
+    # npz: dict-like, npy: ndarray
+    if hasattr(obj, 'keys'):
+        keys = list(obj.keys())
+        if prefer_key and prefer_key in obj:
+            arr = obj[prefer_key]
         else:
-            raise ValueError(f"Unknown model: {model_name}")
-        
-        # Apply custom parameters if provided
-        if model_params:
-            for key, value in model_params.items():
-                if hasattr(model, key):
-                    setattr(model, key, value)
-        
-        return model
+            if prefer_key and prefer_key not in obj:
+                print(f"[WARN] key '{prefer_key}' not in {path}. Using first key: {keys[0]}")
+            arr = obj[keys[0]]
+        return arr
+    else:
+        if prefer_key:
+            print(f"[INFO] {path} is an array (npy). Ignoring key '{prefer_key}'.")
+        return obj
+
+
+def load_npz_pair(x_path: str, t_path: str, x_key: str = "x_train_real", t_key: str = "t_train_real"):
+    """Load x and t from npz/npy files robustly and return numpy arrays."""
+    x = _load_np_any(x_path, x_key)
+    t = _load_np_any(t_path, t_key)
+    print(f"Loaded x: shape={x.shape}, dtype={x.dtype}")
+    print(f"Loaded t: shape={t.shape}, dtype={t.dtype}")
+    return x, t
+
+
+def to_dataset(x: np.ndarray, t: np.ndarray):
+    if x.ndim == 2:
+        x = x[:, None, :]
+    elif x.ndim == 3:
+        pass
+    elif x.ndim == 4:
+        pass
+    else:
+        raise RuntimeError(f"Unsupported x shape: {x.shape}")
+    if t.ndim == 2 and t.shape[1] == 1:
+        t = t[:, 0]
+    elif t.ndim == 2 and t.shape[1] > 1:
+        pass
+    elif t.ndim != 1:
+        raise RuntimeError(f"Expected t to be 1D or (N,M), got {t.shape}")
+    x_t = torch.from_numpy(x).float()
+    y_t = torch.from_numpy(t).float()
+    return TensorDataset(x_t, y_t)
+
+
+@torch.no_grad()
+def evaluate(model, dataloader, device):
+    model.eval()
+    preds, targets = [], []
+    for xb, yb in dataloader:
+        xb = xb.to(device)
+        yb = yb.to(device)
+        pred = model(xb)
+        preds.append(pred.cpu())
+        targets.append(yb.cpu())
+    preds = torch.cat(preds)
+    targets = torch.cat(targets)
+    mse = torch.mean((preds - targets) ** 2).item()
+    mae = torch.mean(torch.abs(preds - targets)).item()
+    return mse, mae, preds.numpy(), targets.numpy()
+
+
+def list_available_datetime_folders(base_dir: str = "/home/smatsubara/documents/airlift/data/outputs_real"):
+    """List all available datetime folders."""
+    if not os.path.exists(base_dir):
+        print(f"Base directory not found: {base_dir}")
+        return []
     
-    def load_model(self, model_path: str, model_params: Dict[str, Any] = None) -> nn.Module:
-        """
-        Load trained model from file.
-        
-        Args:
-            model_path: Path to the model file
-            model_params: Model parameters
+    folders = []
+    for date_folder in sorted(os.listdir(base_dir)):
+        date_path = os.path.join(base_dir, date_folder)
+        if not os.path.isdir(date_path) or date_folder.startswith('.'):
+            continue
             
-        Returns:
-            Loaded PyTorch model
-        """
-        model = self.create_model(model_params or {})
-        model.load_state_dict(torch.load(model_path, map_location=self.device))
-        model = model.to(self.device)
-        model.eval()
-        
-        logger.info(f"Model loaded from: {model_path}")
-        return model
+        for time_folder in sorted(os.listdir(date_path)):
+            time_path = os.path.join(date_path, time_folder)
+            if not os.path.isdir(time_path) or time_folder.startswith('.'):
+                continue
+                
+            folder_name = f"{date_folder}/{time_folder}"
+            folders.append(folder_name)
     
-    def evaluate_model(
-        self,
-        model: nn.Module,
-        dataloader: torch.utils.data.DataLoader
-    ) -> Dict[str, Any]:
-        """
-        Evaluate model on a dataset.
-        
-        Args:
-            model: Model to evaluate
-            dataloader: Data loader for evaluation
+    return folders
+
+
+def find_datetime_folder(datetime_str: str, base_dir: str = "/home/smatsubara/documents/airlift/data/outputs_real"):
+    """Find the folder matching the datetime string."""
+    if not os.path.exists(base_dir):
+        raise FileNotFoundError(f"Base directory not found: {base_dir}")
+    
+    # Look for folders matching the datetime pattern
+    for date_folder in os.listdir(base_dir):
+        date_path = os.path.join(base_dir, date_folder)
+        if not os.path.isdir(date_path):
+            continue
             
-        Returns:
-            Dictionary containing evaluation metrics
-        """
-        model.eval()
-        predictions = []
-        targets = []
-        
-        with torch.no_grad():
-            for batch_x, batch_y in dataloader:
-                # Move batch to GPU
-                batch_x = batch_x.to(self.device, non_blocking=True)
-                batch_y = batch_y.to(self.device, non_blocking=True)
+        for time_folder in os.listdir(date_path):
+            time_path = os.path.join(date_path, time_folder)
+            if not os.path.isdir(time_path):
+                continue
                 
-                outputs = model(batch_x)
-                
-                # Move predictions and targets to CPU before storing
-                predictions.append(outputs.cpu().numpy())
-                targets.append(batch_y.cpu().numpy())
-                
-                # Clear GPU memory after each batch
-                del batch_x, batch_y, outputs
-                torch.cuda.empty_cache()
+            # Check if this folder matches the datetime string
+            folder_name = f"{date_folder}/{time_folder}"
+            if datetime_str in folder_name or folder_name == datetime_str:
+                return time_path
+    
+    # If not found, try direct path
+    direct_path = os.path.join(base_dir, datetime_str)
+    if os.path.exists(direct_path):
+        return direct_path
+    
+    # List available folders for user reference
+    available_folders = list_available_datetime_folders(base_dir)
+    if available_folders:
+        print(f"Available datetime folders:")
+        for folder in available_folders:
+            print(f"  - {folder}")
+    
+    raise FileNotFoundError(f"Datetime folder not found: {datetime_str} in {base_dir}")
+
+
+def load_model_from_datetime_folder(datetime_folder: str, x_sample: torch.Tensor, out_dim: int, device: str):
+    """Load model from datetime folder and return the model."""
+    # Find model file
+    weights_dir = os.path.join(datetime_folder, "weights")
+    model_files = [f for f in os.listdir(weights_dir) if f.endswith('.pth')] if os.path.exists(weights_dir) else []
+    
+    if not model_files:
+        raise FileNotFoundError(f"No .pth files found in {weights_dir}")
+    
+    model_path = os.path.join(weights_dir, model_files[0])
+    print(f"[INFO] Loading model from: {model_path}")
+    
+    # Build model matching input shape
+    if x_sample.ndim == 3:
+        in_channels = x_sample.shape[1]
+        length = x_sample.shape[2]
+        model = SimpleCNNReal(input_length=length, in_channels=in_channels, out_dim=out_dim)
+    elif x_sample.ndim == 4:
+        # NHWC -> NCHW if needed
+        if x_sample.shape[1] not in (1, 3, 4):
+            x_nchw = x_sample.permute(0, 3, 1, 2).contiguous()
+            print("[INFO] Transposed NHWC -> NCHW")
+        else:
+            x_nchw = x_sample
+            
+        in_channels = x_nchw.shape[1]
+        model = SimpleCNNReal2D(in_channels=in_channels, out_dim=out_dim, resize_hw=None)
+        print(f"[INFO] Using Conv2d model for {in_channels}-channel image data")
+    else:
+        raise RuntimeError("Unexpected tensor ndim for model selection")
+    
+    # Load model weights
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.to(device)
+    
+    return model
+
+
+def setup_mlflow_evaluation(experiment_name="cnn_evaluation"):
+    """Setup MLflow experiment for evaluation."""
+    mlflow.set_tracking_uri("file:/home/smatsubara/documents/airlift/data/outputs_real/mlruns")
+    mlflow.set_experiment(experiment_name)
+    return mlflow.start_run()
+
+
+def log_evaluation_metrics(y_pred, y_true, target_names):
+    """Log evaluation metrics to MLflow."""
+    from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+    
+    # Overall metrics
+    overall_mse = np.mean((y_pred - y_true) ** 2)
+    overall_mae = np.mean(np.abs(y_pred - y_true))
+    
+    mlflow.log_metrics({
+        "eval_mse": overall_mse,
+        "eval_mae": overall_mae
+    })
+    
+    # Per-target metrics
+    for i, target_name in enumerate(target_names):
+        pred_i = y_pred[:, i]
+        true_i = y_true[:, i]
         
-        # Concatenate all predictions and targets
-        predictions = np.concatenate(predictions, axis=0)
-        targets = np.concatenate(targets, axis=0)
-        
-        # Flatten arrays for metric calculation
-        predictions_flat = predictions.flatten()
-        targets_flat = targets.flatten()
-        
-        # Calculate metrics
-        mse = mean_squared_error(targets_flat, predictions_flat)
-        mae = mean_absolute_error(targets_flat, predictions_flat)
-        r2 = r2_score(targets_flat, predictions_flat)
-        pearson_corr, pearson_p = pearsonr(targets_flat, predictions_flat)
-        spearman_corr, spearman_p = spearmanr(targets_flat, predictions_flat)
-        
-        # Calculate additional metrics
+        r2 = r2_score(true_i, pred_i)
+        mse = mean_squared_error(true_i, pred_i)
+        mae = mean_absolute_error(true_i, pred_i)
         rmse = np.sqrt(mse)
-        mape = np.mean(np.abs((targets_flat - predictions_flat) / (targets_flat + 1e-8))) * 100
         
-        metrics = {
-            'mse': mse,
-            'mae': mae,
-            'rmse': rmse,
-            'r2': r2,
-            'pearson_correlation': pearson_corr,
-            'pearson_p_value': pearson_p,
-            'spearman_correlation': spearman_corr,
-            'spearman_p_value': spearman_p,
-            'mape': mape,
-            'n_samples': len(targets_flat)
-        }
-        
-        logger.info(f"Evaluation metrics: {metrics}")
-        
-        return {
-            'metrics': metrics,
-            'predictions': predictions,
-            'targets': targets
-        }
-    
-    def create_evaluation_plots(
-        self,
-        predictions: np.ndarray,
-        targets: np.ndarray,
-        output_dir: str
-    ) -> List[str]:
-        """
-        Create evaluation plots.
-        
-        Args:
-            predictions: Model predictions
-            targets: True targets
-            output_dir: Directory to save plots
-            
-        Returns:
-            List of saved plot paths
-        """
-        plot_paths = []
-        
-        # Flatten arrays
-        predictions_flat = predictions.flatten()
-        targets_flat = targets.flatten()
-        
-        # 1. Scatter plot: Predictions vs Targets
-        fig, ax = plt.subplots(figsize=(10, 8))
-        ax.scatter(targets_flat, predictions_flat, alpha=0.6, s=20)
-        
-        # Add diagonal line
-        min_val = min(targets_flat.min(), predictions_flat.min())
-        max_val = max(targets_flat.max(), predictions_flat.max())
-        ax.plot([min_val, max_val], [min_val, max_val], 'r--', label='Perfect Prediction')
-        
-        ax.set_xlabel('True Values')
-        ax.set_ylabel('Predicted Values')
-        ax.set_title('Predictions vs True Values')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        # Add correlation coefficient to plot
-        corr = np.corrcoef(targets_flat, predictions_flat)[0, 1]
-        ax.text(0.05, 0.95, f'Correlation: {corr:.4f}', 
-                transform=ax.transAxes, fontsize=12, 
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        
-        scatter_path = os.path.join(output_dir, "predictions_vs_targets.png")
-        fig.savefig(scatter_path, dpi=300, bbox_inches='tight')
-        plot_paths.append(scatter_path)
-        plt.close(fig)
-        
-        # 2. Residual plot
-        residuals = targets_flat - predictions_flat
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.scatter(predictions_flat, residuals, alpha=0.6, s=20)
-        ax.axhline(y=0, color='r', linestyle='--')
-        ax.set_xlabel('Predicted Values')
-        ax.set_ylabel('Residuals (True - Predicted)')
-        ax.set_title('Residual Plot')
-        ax.grid(True, alpha=0.3)
-        
-        residual_path = os.path.join(output_dir, "residual_plot.png")
-        fig.savefig(residual_path, dpi=300, bbox_inches='tight')
-        plot_paths.append(residual_path)
-        plt.close(fig)
-        
-        # 3. Histogram of residuals
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.hist(residuals, bins=50, alpha=0.7, edgecolor='black')
-        ax.set_xlabel('Residuals')
-        ax.set_ylabel('Frequency')
-        ax.set_title('Distribution of Residuals')
-        ax.grid(True, alpha=0.3)
-        
-        # Add statistics
-        mean_residual = np.mean(residuals)
-        std_residual = np.std(residuals)
-        ax.text(0.05, 0.95, f'Mean: {mean_residual:.4f}\nStd: {std_residual:.4f}', 
-                transform=ax.transAxes, fontsize=12,
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        
-        histogram_path = os.path.join(output_dir, "residuals_histogram.png")
-        fig.savefig(histogram_path, dpi=300, bbox_inches='tight')
-        plot_paths.append(histogram_path)
-        plt.close(fig)
-        
-        # 4. Time series plot (if applicable)
-        if len(predictions) > 100:
-            # Sample for visualization
-            n_samples = min(1000, len(predictions))
-            indices = np.random.choice(len(predictions), n_samples, replace=False)
-            
-            fig, ax = plt.subplots(figsize=(15, 6))
-            ax.plot(indices, targets_flat[indices], label='True Values', alpha=0.7)
-            ax.plot(indices, predictions_flat[indices], label='Predictions', alpha=0.7)
-            ax.set_xlabel('Sample Index')
-            ax.set_ylabel('Value')
-            ax.set_title('Time Series Comparison (Sampled)')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            
-            timeseries_path = os.path.join(output_dir, "timeseries_comparison.png")
-            fig.savefig(timeseries_path, dpi=300, bbox_inches='tight')
-            plot_paths.append(timeseries_path)
-            plt.close(fig)
-        
-        return plot_paths
-    
-    def save_evaluation_results(
-        self,
-        results: Dict[str, Any],
-        output_dir: str
-    ) -> str:
-        """
-        Save evaluation results to files.
-        
-        Args:
-            results: Evaluation results
-            output_dir: Directory to save results
-            
-        Returns:
-            Path to saved results file
-        """
-        # Save metrics to JSON
-        metrics_file = os.path.join(output_dir, "evaluation_metrics.json")
-        with open(metrics_file, 'w') as f:
-            json.dump(results['metrics'], f, indent=2)
-        
-        # Save predictions and targets to CSV
-        predictions_df = pd.DataFrame({
-            'predictions': results['predictions'].flatten(),
-            'targets': results['targets'].flatten(),
-            'residuals': results['targets'].flatten() - results['predictions'].flatten()
+        mlflow.log_metrics({
+            f"eval_{target_name}_r2": r2,
+            f"eval_{target_name}_mse": mse,
+            f"eval_{target_name}_mae": mae,
+            f"eval_{target_name}_rmse": rmse
         })
-        
-        csv_file = os.path.join(output_dir, "evaluation_results.csv")
-        predictions_df.to_csv(csv_file, index=False)
-        
-        logger.info(f"Evaluation results saved to: {output_dir}")
-        
-        return metrics_file
+
+
+def log_evaluation_artifacts(y_pred, y_true, plots_dir):
+    """Log evaluation artifacts to MLflow."""
+    # Log prediction results
+    import tempfile
+    with tempfile.TemporaryDirectory() as temp_dir:
+        np.save(os.path.join(temp_dir, "eval_y_pred.npy"), y_pred)
+        np.save(os.path.join(temp_dir, "eval_y_true.npy"), y_true)
+        mlflow.log_artifacts(temp_dir, "evaluation_predictions")
     
-    def run_evaluation(
-        self,
-        model_path: str,
-        model_params: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
-        """
-        Run complete evaluation pipeline.
-        
-        Args:
-            model_path: Path to the trained model
-            model_params: Model parameters
-            
-        Returns:
-            Dictionary containing evaluation results
-        """
-        logger.info("Starting evaluation pipeline...")
-        
-        # Create output directory for this evaluation
-        eval_output_dir = os.path.join(
-            self.output_dir,
-            f"evaluation_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        )
-        os.makedirs(eval_output_dir, exist_ok=True)
-        
-        # Skip dataset info to avoid memory issues with large datasets
-        # dataset_info = get_dataset_info(
-        #     self.config['dataset']['x_train'],
-        #     self.config['dataset']['t_train'],
-        #     self.config['dataset']['data_keys']['x_key'],
-        #     self.config['dataset']['data_keys']['t_key']
-        # )
-        
-        # Create dummy dataset info for logging
-        dataset_info = {
-            'x_shape': 'Unknown (large dataset)',
-            'x_dtype': 'float32',
-            't_shape': 'Unknown (large dataset)',
-            't_dtype': 'float32',
-            'n_samples': 'Unknown (large dataset)',
-            'x_size_mb': 'Unknown (large dataset)',
-            't_size_mb': 'Unknown (large dataset)'
-        }
-        
-        logger.info(f"Dataset info: {dataset_info}")
-        
-        # Create dataloaders
-        train_dataloader, val_dataloader = create_chunked_dataloader(
-            x_path=self.config['dataset']['x_train'],
-            t_path=self.config['dataset']['t_train'],
-            batch_size=self.config['hyperparameters']['batch_size'],
-            x_key=self.config['dataset']['data_keys']['x_key'],
-            t_key=self.config['dataset']['data_keys']['t_key'],
-            max_samples=108,  # Limit samples for evaluation
-            shuffle=False
-        )
-        
-        logger.info(f"Created dataloaders: {len(train_dataloader)} train batches, {len(val_dataloader)} val batches")
-        
-        # Load model
-        model = self.load_model(model_path, model_params)
-        
-        # Start MLflow run
-        self.mlflow_tracker.start_run(
-            run_name=f"real_data_evaluation_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            tags={
-                "dataset": "real_data",
-                "model": self.config['model']['name'],
-                "task": "evaluation"
-            }
-        )
-        
-        try:
-            # Evaluate on training set
-            logger.info("Evaluating on training set...")
-            train_results = self.evaluate_model(model, train_dataloader)
-            
-            # Evaluate on validation set
-            logger.info("Evaluating on validation set...")
-            val_results = self.evaluate_model(model, val_dataloader)
-            
-            # Create plots for validation set
-            logger.info("Creating evaluation plots...")
-            plot_paths = self.create_evaluation_plots(
-                val_results['predictions'],
-                val_results['targets'],
-                eval_output_dir
-            )
-            
-            # Save results
-            results_file = self.save_evaluation_results(val_results, eval_output_dir)
-            
-            # Log to MLflow
-            self.mlflow_tracker.log_metrics({
-                f"train_{key}": value for key, value in train_results['metrics'].items()
-            })
-            self.mlflow_tracker.log_metrics({
-                f"val_{key}": value for key, value in val_results['metrics'].items()
-            })
-            
-            self.mlflow_tracker.log_dataset_info(dataset_info)
-            self.mlflow_tracker.log_artifacts(eval_output_dir, "evaluation_outputs")
-            
-            logger.info("Evaluation pipeline completed successfully")
-            
-            return {
-                'train_results': train_results,
-                'val_results': val_results,
-                'plot_paths': plot_paths,
-                'results_file': results_file,
-                'output_dir': eval_output_dir
-            }
-            
-        finally:
-            # End MLflow run
-            self.mlflow_tracker.end_run()
+    # Log evaluation plots if they exist
+    if os.path.exists(plots_dir):
+        mlflow.log_artifacts(plots_dir, "evaluation_plots")
+
+
+def get_best_model_from_experiment(experiment_name, metric="val_loss"):
+    """Get the best model from an MLflow experiment."""
+    client = MlflowClient()
+    experiment = client.get_experiment_by_name(experiment_name)
+    
+    if experiment is None:
+        raise ValueError(f"Experiment '{experiment_name}' not found")
+    
+    runs = client.search_runs(
+        experiment_ids=[experiment.experiment_id],
+        order_by=[f"metrics.{metric} ASC"]
+    )
+    
+    if not runs:
+        raise ValueError(f"No runs found in experiment '{experiment_name}'")
+    
+    best_run = runs[0]
+    return best_run.info.run_id, best_run.data.metrics.get(metric, 0)
+
+
+def load_model_from_mlflow(run_id, x_sample, out_dim, device):
+    """Load model from MLflow run."""
+    client = MlflowClient()
+    run = client.get_run(run_id)
+    
+    # Download model
+    model_uri = f"runs:/{run_id}/model"
+    model = mlflow.pytorch.load_model(model_uri)
+    
+    # Move to device
+    model.to(device)
+    
+    print(f"[MLFLOW] Loaded model from run: {run_id}")
+    print(f"[MLFLOW] Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    
+    return model
 
 
 def main():
-    """Main function to run evaluation."""
-    # Load configuration
-    config_path = "/home/smatsubara/documents/sandbox/ml_airlift/config/config_real.yaml"
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+    parser = argparse.ArgumentParser(description="Evaluate model on test data")
+    parser.add_argument("--x", default="/home/smatsubara/documents/sandbox/ml_airlift/cleaned_data/x_train_real_cleaned.npy",
+                        help="Path to input data")
+    parser.add_argument("--t", default="/home/smatsubara/documents/sandbox/ml_airlift/cleaned_data/t_train_real_cleaned.npy",
+                        help="Path to target data")
+    parser.add_argument("--x_key", default="x_train_real", help="Key for x data in .npz file")
+    parser.add_argument("--t_key", default="t_train_real", help="Key for t data in .npz file")
+    parser.add_argument("--datetime", type=str, help="Datetime folder to load model from (e.g., '2025-10-29/11-39-35')")
+    parser.add_argument("--model", default="/home/smatsubara/documents/airlift/data/outputs_real/simple/model_simplecnn_real.pth",
+                        help="Path to model file (used if --datetime not specified)")
+    parser.add_argument("--batch", type=int, default=8, help="Batch size for evaluation")
+    parser.add_argument("--device", default="cuda:0" if torch.cuda.is_available() else "cpu", help="Device to use")
+    parser.add_argument("--resize_h", type=int, default=0, help="Height to resize input images to")
+    parser.add_argument("--resize_w", type=int, default=0, help="Width to resize input images to")
+    parser.add_argument("--ds_factor", type=int, default=1, help="Downsample factor along H for (N,C,H,W) inputs")
+    parser.add_argument("--limit", type=int, default=0, help="Limit number of samples for evaluation (0 for all)")
+    parser.add_argument("--create_plots", action="store_true", help="Create evaluation plots")
     
-    # Create evaluator
-    evaluator = RealDataEvaluator(config)
+    # MLflow arguments
+    parser.add_argument("--use_mlflow", action="store_true", help="Use MLflow for evaluation tracking")
+    parser.add_argument("--experiment_name", default="cnn_evaluation", help="MLflow experiment name")
+    parser.add_argument("--run_name", default=None, help="MLflow run name")
+    parser.add_argument("--tags", nargs="*", help="MLflow tags (format: key=value)")
+    parser.add_argument("--best_model", action="store_true", help="Use best model from training experiment")
+    parser.add_argument("--training_experiment", default="cnn_real_data", help="Training experiment name for best model")
+    parser.add_argument("--mlflow_run_id", type=str, help="Specific MLflow run ID to evaluate")
     
-    # Run evaluation
-    # Note: You need to provide the path to your trained model
-    model_path = input("Enter the path to your trained model (.pth file): ")
+    args = parser.parse_args()
+
+    print("🔍 Model Evaluation Script")
+    print("=" * 50)
+    print(f"[INFO] MLflow enabled: {args.use_mlflow}")
     
-    if not os.path.exists(model_path):
-        logger.error(f"Model file not found: {model_path}")
-        return
+    # Setup MLflow if enabled
+    if args.use_mlflow:
+        run_context = setup_mlflow_evaluation(args.experiment_name)
+        run_name = args.run_name or f"eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        mlflow.set_tag("mlflow.runName", run_name)
+        
+        # Set tags
+        if args.tags:
+            for tag in args.tags:
+                if "=" in tag:
+                    key, value = tag.split("=", 1)
+                    mlflow.set_tag(key, value)
+        
+        print(f"[MLFLOW] Experiment: {args.experiment_name}")
+        print(f"[MLFLOW] Run: {run_name}")
     
-    results = evaluator.run_evaluation(model_path)
+    # Determine output directory
+    if args.datetime:
+        try:
+            datetime_folder = find_datetime_folder(args.datetime)
+            print(f"[INFO] Using datetime folder: {datetime_folder}")
+            output_dir = os.path.join(datetime_folder, "evaluation_plots")
+        except FileNotFoundError as e:
+            print(f"[ERROR] {e}")
+            return
+    else:
+        output_dir = "/home/smatsubara/documents/airlift/data/outputs_real/simple"
+        print(f"[INFO] Using default output directory: {output_dir}")
     
-    logger.info(f"Evaluation completed. Results saved to: {results['output_dir']}")
-    logger.info(f"Validation metrics: {results['val_results']['metrics']}")
+    device = args.device
+    print(f"[INFO] Device: {device}")
+
+    # Load data
+    print("[STEP] Loading dataset files...")
+    x, t = load_npz_pair(args.x, args.t, args.x_key, args.t_key)
+    print(f"[OK] Loaded. x.shape={x.shape}, t.shape={t.shape}")
+    
+    # Limit samples if specified
+    if args.limit > 0:
+        n = min(args.limit, x.shape[0])
+        x = x[:n]
+        t = t[:n]
+        print(f"[INFO] Limited to first {n} samples")
+    
+    # Optional downsampling
+    if x.ndim == 4 and args.ds_factor > 1:
+        h0 = x.shape[2]
+        x = x[:, :, ::args.ds_factor, :]
+        print(f"[INFO] Downsampled H: {h0} -> {x.shape[2]} (factor={args.ds_factor})")
+    elif x.ndim == 4:
+        print(f"[INFO] Using full resolution: H={x.shape[2]}, W={x.shape[3]}")
+    
+    # Create dataset
+    print("[STEP] Building dataset...")
+    dataset = to_dataset(x, t)
+    loader = DataLoader(dataset, batch_size=args.batch, shuffle=False)
+    print(f"[OK] Dataset ready. Samples: {len(dataset)}")
+
+    # Load model
+    print("[STEP] Loading model...")
+    x_sample = dataset.tensors[0]
+    out_dim = dataset.tensors[1].shape[1] if dataset.tensors[1].ndim == 2 else 1
+    
+    # Determine model source
+    if args.use_mlflow and args.best_model:
+        # Load best model from MLflow experiment
+        try:
+            run_id, best_metric = get_best_model_from_experiment(args.training_experiment)
+            print(f"[MLFLOW] Using best model from experiment '{args.training_experiment}' (run_id: {run_id}, metric: {best_metric})")
+            model = load_model_from_mlflow(run_id, x_sample, out_dim, device)
+        except Exception as e:
+            print(f"[ERROR] Failed to load best model from MLflow: {e}")
+            return
+    elif args.use_mlflow and args.mlflow_run_id:
+        # Load specific model from MLflow run
+        try:
+            print(f"[MLFLOW] Loading model from run_id: {args.mlflow_run_id}")
+            model = load_model_from_mlflow(args.mlflow_run_id, x_sample, out_dim, device)
+        except Exception as e:
+            print(f"[ERROR] Failed to load model from MLflow run: {e}")
+            return
+    elif args.datetime:
+        # Load from datetime folder
+        model = load_model_from_datetime_folder(datetime_folder, x_sample, out_dim, device)
+    else:
+        # Load from specified model path
+        model_path = args.model
+        print(f"[INFO] Loading model from: {model_path}")
+        
+        if x_sample.ndim == 3:
+            in_channels = x_sample.shape[1]
+            length = x_sample.shape[2]
+            model = SimpleCNNReal(input_length=length, in_channels=in_channels, out_dim=out_dim)
+        elif x_sample.ndim == 4:
+            if x_sample.shape[1] not in (1, 3, 4):
+                x_nchw = x_sample.permute(0, 3, 1, 2).contiguous()
+                dataset.tensors = (x_nchw, dataset.tensors[1])
+                x_sample = x_nchw
+            in_channels = x_sample.shape[1]
+            resize_hw = (args.resize_h, args.resize_w) if args.resize_h > 0 and args.resize_w > 0 else None
+            model = SimpleCNNReal2D(in_channels=in_channels, out_dim=out_dim, resize_hw=resize_hw)
+        else:
+            raise RuntimeError("Unexpected tensor ndim for model selection")
+        
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.to(device)
+    
+    print(f"[OK] Model loaded. Parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+    # Evaluate model
+    print("[STEP] Evaluating model...")
+    mse, mae, y_pred, y_true = evaluate(model, loader, device)
+    print(f"[OK] Evaluation complete!")
+    print(f"All-data Eval | MSE={mse:.6f} | MAE={mae:.6f}")
+    
+    # Print per-target results for multi-output regression
+    if y_pred.shape[1] > 1:
+        print(f"[INFO] Per-target results:")
+        for i in range(y_pred.shape[1]):
+            target_mse = np.mean((y_pred[:, i] - y_true[:, i])**2)
+            target_mae = np.mean(np.abs(y_pred[:, i] - y_true[:, i]))
+            print(f"  Target {i+1}: MSE={target_mse:.6f}, MAE={target_mae:.6f}")
+
+    # Save results
+    print("[STEP] Saving results...")
+    os.makedirs(output_dir, exist_ok=True)
+    np.save(os.path.join(output_dir, "eval_y_true.npy"), y_true)
+    np.save(os.path.join(output_dir, "eval_y_pred.npy"), y_pred)
+    print(f"[OK] Results saved to: {output_dir}")
+
+    # Create evaluation plots if requested
+    if args.create_plots and y_pred.shape[1] > 1:
+        print("[STEP] Creating evaluation plots...")
+        target_names = [
+            "Solid Velocity", "Gas Velocity", "Liquid Velocity",
+            "Solid Volume Fraction", "Gas Volume Fraction", "Liquid Volume Fraction"
+        ]
+        create_prediction_plots(y_pred, y_true, output_dir, target_names)
+        print(f"[OK] Evaluation plots saved to: {output_dir}")
+        
+        # Log evaluation metrics and artifacts to MLflow
+        if args.use_mlflow:
+            log_evaluation_metrics(y_pred, y_true, target_names)
+            log_evaluation_artifacts(y_pred, y_true, output_dir)
+            print(f"[MLFLOW] Evaluation metrics and artifacts logged")
+    elif args.use_mlflow and y_pred.shape[1] > 1:
+        # Log metrics even without plots
+        target_names = [
+            "Solid Velocity", "Gas Velocity", "Liquid Velocity",
+            "Solid Volume Fraction", "Gas Volume Fraction", "Liquid Volume Fraction"
+        ]
+        log_evaluation_metrics(y_pred, y_true, target_names)
+        print(f"[MLFLOW] Evaluation metrics logged")
+    
+    print(f"[DONE] Evaluation completed successfully!")
+    
+    # Close MLflow run if enabled
+    if args.use_mlflow:
+        run_context.__exit__(None, None, None)
+        print(f"[MLFLOW] Evaluation run completed. View results in MLflow UI")
 
 
 if __name__ == "__main__":
     main()
+
+

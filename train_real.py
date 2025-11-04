@@ -1,518 +1,430 @@
 #!/usr/bin/env python3
 """
-Training script for real data with MLOps integration.
-Uses Optuna for hyperparameter optimization and MLflow for experiment tracking.
+Train CNN model using Hydra configuration management.
+Automatically creates timestamped output directories.
 """
 
+import os
+import time
+import datetime
+import shutil
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
-import os
-import logging
-from typing import Dict, Any, List, Tuple
+from torch.utils.data import TensorDataset, DataLoader, random_split
+from models.cnn import SimpleCNNReal, SimpleCNNReal2D
+from src.evaluate_predictions import create_prediction_plots
 import matplotlib.pyplot as plt
-from datetime import datetime
-import yaml
-import json
 
-# Import project modules
-from models import SimpleCNN, ResidualCNN, ProposedCNN, BaseCNN
-# SimpleViTRegressor is not available due to torchvision import issues
-from src import (
-    RealDataDataset, 
-    create_real_data_dataloader, 
-    get_dataset_info,
-    OptunaOptimizer, 
-    MLflowTracker,
-    log_gpu_memory_usage,
-    clear_gpu_memory
-)
-from src.chunked_loader import create_chunked_dataloader
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+import hydra
+from omegaconf import OmegaConf
 
 
-class RealDataTrainer:
-    """
-    Trainer class for real data with MLOps integration.
-    """
-    
-    def __init__(self, config: Dict[str, Any]):
-        """
-        Initialize the trainer.
-        
-        Args:
-            config: Configuration dictionary
-        """
-        self.config = config
-        self.device = torch.device(config['training']['device'])
-        self.output_dir = config['hydra']['run']['dir']
-        
-        # Create output directory
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-        # Initialize MLflow tracker (if available)
-        if MLflowTracker is not None:
-            self.mlflow_tracker = MLflowTracker(
-                experiment_name=config['mlflow']['experiment_name'],
-                tracking_uri=config['mlflow']['tracking_uri'],
-                log_artifacts=config['mlflow']['log_artifacts'],
-                log_models=config['mlflow']['log_models']
-            )
+def _load_np_any(path: str, prefer_key: str = None):
+    """Load numpy array from .npy or .npz file."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"file not found: {path}")
+    obj = np.load(path)
+    # npz: dict-like, npy: ndarray
+    if hasattr(obj, 'keys'):
+        keys = list(obj.keys())
+        if prefer_key and prefer_key in obj:
+            arr = obj[prefer_key]
         else:
-            self.mlflow_tracker = None
-            logger.warning("MLflowTracker not available - skipping MLflow logging")
+            if prefer_key and prefer_key not in obj:
+                print(f"[WARN] key '{prefer_key}' not in {path}. Using first key: {keys[0]}")
+            arr = obj[keys[0]]
+        return arr
+    else:
+        if prefer_key:
+            print(f"[INFO] {path} is an array (npy). Ignoring key '{prefer_key}'.")
+        return obj
+
+
+def load_npz_pair(x_path: str, t_path: str, x_key: str = "x_train_real", t_key: str = "t_train_real"):
+    """Load x and t from npz/npy files robustly and return numpy arrays."""
+    x = _load_np_any(x_path, x_key)
+    t = _load_np_any(t_path, t_key)
+    print(f"Loaded x: shape={getattr(x, 'shape', None)}, dtype={getattr(x, 'dtype', None)}")
+    print(f"Loaded t: shape={getattr(t, 'shape', None)}, dtype={getattr(t, 'dtype', None)}")
+    return x, t
+
+
+def to_tensor_dataset(x: np.ndarray, t: np.ndarray, device: str = "cuda:0"):
+    """Convert numpy arrays to torch tensors and TensorDataset."""
+    if x.ndim == 2:
+        # (N, L) -> (N, 1, L)
+        x = x[:, None, :]
+    elif x.ndim == 3:
+        # Either (N, C, L) for 1D or (N, H, W) image-like; we decide later.
+        pass
+    elif x.ndim == 4:
+        # (N, C, H, W) or (N, H, W, C)
+        pass
+    else:
+        raise RuntimeError(f"Unsupported x shape: {x.shape}")
+
+    # Allow multi-target (N, M)
+    if t.ndim == 2 and t.shape[1] == 1:
+        t = t[:, 0]
+    elif t.ndim == 2 and t.shape[1] > 1:
+        pass
+    elif t.ndim != 1:
+        raise RuntimeError(f"Expected t to be 1D or (N,M), got {t.shape}")
+
+    x_t = torch.from_numpy(x).float()
+    y_t = torch.from_numpy(t).float()
+    print(f"Tensor x: {tuple(x_t.shape)}  Tensor y: {tuple(y_t.shape)}")
+    return TensorDataset(x_t, y_t)
+
+
+def split_dataset(dataset: TensorDataset, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15, seed=42):
+    """Split dataset into train/validation/test sets."""
+    assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6
+    N = len(dataset)
+    
+    # Ensure minimum sizes for small datasets
+    n_train = max(1, int(N * train_ratio))
+    n_val = max(1, int(N * val_ratio)) if N >= 3 else 0
+    n_test = N - n_train - n_val
+    
+    # Adjust if test set would be negative
+    if n_test < 0:
+        n_test = 0
+        n_val = max(0, N - n_train)
+    
+    # Ensure we don't exceed total size
+    if n_train + n_val + n_test > N:
+        n_test = N - n_train - n_val
+    
+    print(f"[INFO] Split sizes: train={n_train}, val={n_val}, test={n_test}")
+    
+    g = torch.Generator().manual_seed(seed)
+    return random_split(dataset, [n_train, n_val, n_test], generator=g)
+
+
+def train_one_epoch(model, dataloader, criterion, optimizer, device, print_every=50):
+    """Train model for one epoch."""
+    model.train()
+    total = 0.0
+    for i, (xb, yb) in enumerate(dataloader):
+        xb = xb.to(device)
+        yb = yb.to(device)
+        optimizer.zero_grad()
+        pred = model(xb)
+        loss = criterion(pred, yb)
+        loss.backward()
+        optimizer.step()
+        total += loss.item() * xb.size(0)
+        if (i + 1) % print_every == 0:
+            print(f"  [train] step {i+1}/{len(dataloader)} loss={loss.item():.6f}")
+    return total / len(dataloader.dataset)
+
+
+@torch.no_grad()
+def evaluate(model, dataloader, criterion, device):
+    """Evaluate model on dataset."""
+    model.eval()
+    total = 0.0
+    preds, targets = [], []
+    for xb, yb in dataloader:
+        xb = xb.to(device)
+        yb = yb.to(device)
+        pred = model(xb)
+        loss = criterion(pred, yb)
+        total += loss.item() * xb.size(0)
+        preds.append(pred.cpu())
+        targets.append(yb.cpu())
+    preds = torch.cat(preds)
+    targets = torch.cat(targets)
+    mse = total / len(dataloader.dataset)
+    mae = torch.mean(torch.abs(preds - targets)).item()
+    return mse, mae, preds.numpy(), targets.numpy()
+
+
+def create_model(cfg, x_sample: torch.Tensor, out_dim: int, device: torch.device):
+    """Create model based on configuration and data shape."""
+    if x_sample.ndim == 3:
+        # 1D CNN
+        in_channels = x_sample.shape[1]
+        length = x_sample.shape[2]
+        model = SimpleCNNReal(input_length=length, in_channels=in_channels, out_dim=out_dim).to(device)
+        print(f"[OK] Using Conv1d model (C={in_channels}, L={length})")
         
-        # Initialize Optuna optimizer (if available)
-        if OptunaOptimizer is not None:
-            self.optuna_optimizer = OptunaOptimizer(
-                study_name=config['optuna']['study_name'],
-                storage=config['optuna']['storage'],
-                direction=config['optuna']['direction'],
-                n_trials=config['optuna']['n_trials'],
-                timeout=config['optuna']['timeout']
-            )
+    elif x_sample.ndim == 4:
+        # 2D CNN for image data
+        if x_sample.shape[1] not in (1, 3, 4):
+            x_nchw = x_sample.permute(0, 3, 1, 2).contiguous()
+            print("[INFO] Transposed NHWC -> NCHW")
         else:
-            self.optuna_optimizer = None
-            logger.warning("OptunaOptimizer not available - using default hyperparameters")
-        
-        logger.info(f"Trainer initialized with device: {self.device}")
-        logger.info(f"Output directory: {self.output_dir}")
-    
-    def create_model(self, model_params: Dict[str, Any]) -> nn.Module:
-        """
-        Create model based on configuration.
-        
-        Args:
-            model_params: Model parameters
+            x_nchw = x_sample
             
-        Returns:
-            PyTorch model
-        """
-        model_name = self.config['model']['name']
-        input_length = self.config['hyperparameters']['input_length']
+        in_channels = x_nchw.shape[1]
         
-        # Get model architecture parameters
-        model_params = self.config['model']['architecture']
-        
-        if model_name == 'SimpleCNN':
-            model = SimpleCNN(input_length, **model_params)
-        elif model_name == 'SimpleViTRegressor':
-            raise ValueError("SimpleViTRegressor is not available due to torchvision import issues")
-        elif model_name == 'ResidualCNN':
-            model = ResidualCNN(input_length, **model_params)
-        elif model_name == 'ProposedCNN':
-            model = ProposedCNN(input_length, **model_params)
-        elif model_name == 'BaseCNN':
-            model = BaseCNN(input_length, **model_params)
+        # Get resize parameters from config
+        resize_hw = cfg.model.resize_hw
+        if resize_hw and resize_hw[0] > 0 and resize_hw[1] > 0:
+            resize_hw = tuple(resize_hw)
         else:
-            raise ValueError(f"Unknown model: {model_name}")
+            resize_hw = None
+            
+        model = SimpleCNNReal2D(in_channels=in_channels, out_dim=out_dim, resize_hw=resize_hw).to(device)
+        print(f"[OK] Using Conv2d model for {in_channels}-channel image data")
+        print(f"[OK] Input: (N, {in_channels}, {x_nchw.shape[2]}, {x_nchw.shape[3]}) -> Output: (N, {out_dim})")
+        print(f"[OK] Resize: {resize_hw if resize_hw else 'Full resolution'}")
         
-        # Apply custom parameters if provided
-        if model_params:
-            for key, value in model_params.items():
-                if hasattr(model, key):
-                    setattr(model, key, value)
-        
-        # Ensure model outputs 6 dimensions
-        if hasattr(model, 'fc'):
-            model.fc = torch.nn.Linear(model.fc.in_features, 6)
-        elif hasattr(model, 'classifier'):
-            model.classifier = torch.nn.Linear(model.classifier.in_features, 6)
-        elif hasattr(model, 'head'):
-            model.head = torch.nn.Linear(model.head.in_features, 6)
-        
-        return model
+    else:
+        raise RuntimeError("Unexpected tensor ndim for model selection")
     
-    def train_model(
-        self,
-        model: nn.Module,
-        train_dataloader: torch.utils.data.DataLoader,
-        val_dataloader: torch.utils.data.DataLoader,
-        hyperparams: Dict[str, Any]
-    ) -> Tuple[nn.Module, List[float], List[float], Dict[str, Any]]:
-        """
-        Train a single model.
-        
-        Args:
-            model: Model to train
-            train_dataloader: Training data loader
-            val_dataloader: Validation data loader
-            hyperparams: Hyperparameters
-            
-        Returns:
-            Tuple of (trained_model, train_losses, val_losses, metrics)
-        """
-        model = model.to(self.device)
-        
-        # Use half precision if available
-        if self.device.type == 'cuda':
-            model = model.half()
-        
-        # Setup optimizer and loss
-        optimizer = optim.Adam(
-            model.parameters(),
-            lr=hyperparams['learning_rate']
-        )
-        criterion = nn.MSELoss()
-        
-        # Training history
-        train_losses = []
-        val_losses = []
-        
-        # Training loop with memory-efficient GPU usage
-        for epoch in range(hyperparams['num_epochs']):
-            # Log memory usage at start of epoch
-            if epoch % 10 == 0:
-                log_gpu_memory_usage(f"start of epoch {epoch}")
-            
-            # Training
-            model.train()
-            train_loss = 0.0
-            for batch_idx, (batch_x, batch_y) in enumerate(train_dataloader):
-                # Move batch to GPU
-                batch_x = batch_x.to(self.device, non_blocking=True)
-                batch_y = batch_y.to(self.device, non_blocking=True)
-                
-                # Use half precision if available
-                if self.device.type == 'cuda':
-                    batch_x = batch_x.half()
-                
-                optimizer.zero_grad()
-                outputs = model(batch_x)
-                loss = criterion(outputs, batch_y)
-                
-                # Add regularization (compute efficiently)
-                if hyperparams.get('l1_lambda', 0) > 0 or hyperparams.get('l2_lambda', 0) > 0:
-                    l1_norm = sum(p.abs().sum() for p in model.parameters())
-                    l2_norm = sum(p.pow(2).sum() for p in model.parameters())
-                    loss = loss + hyperparams.get('l1_lambda', 0) * l1_norm + hyperparams.get('l2_lambda', 0) * l2_norm
-                
-                loss.backward()
-                optimizer.step()
-                train_loss += loss.item()
-                
-                # Log progress every 10 batches
-                if batch_idx % 10 == 0:
-                    logger.info(f"Epoch {epoch+1}, Batch {batch_idx}/{len(train_dataloader)}, Loss: {loss.item():.6f}")
-                
-                # Clear GPU memory after each batch
-                del batch_x, batch_y, outputs, loss
-                if batch_idx % 50 == 0:  # Clear cache every 50 batches
-                    torch.cuda.empty_cache()
-            
-            train_loss /= len(train_dataloader)
-            train_losses.append(train_loss)
-            
-            # Validation (memory-efficient)
-            model.eval()
-            val_loss = 0.0
-            val_predictions = []
-            val_targets = []
-            
-            with torch.no_grad():
-                for batch_idx, (val_x, val_y) in enumerate(val_dataloader):
-                    # Move batch to GPU
-                    val_x = val_x.to(self.device, non_blocking=True)
-                    val_y = val_y.to(self.device, non_blocking=True)
-                    
-                    # Use half precision if available
-                    if self.device.type == 'cuda':
-                        val_x = val_x.half()
-                    
-                    outputs = model(val_x)
-                    loss = criterion(outputs, val_y)
-                    val_loss += loss.item()
-                    
-                    # Store only a subset of predictions to save memory
-                    if len(val_predictions) < 10:  # Limit to 10 batches
-                        val_predictions.append(outputs.cpu().clone())
-                        val_targets.append(val_y.cpu().clone())
-                    
-                    # Clear GPU memory after each batch
-                    del val_x, val_y, outputs, loss
-                    if batch_idx % 20 == 0:  # Clear cache every 20 batches
-                        torch.cuda.empty_cache()
-            
-            val_loss /= len(val_dataloader)
-            val_losses.append(val_loss)
-            
-            # Calculate correlation on subset to save memory
-            if val_predictions:
-                val_predictions_tensor = torch.cat(val_predictions, dim=0)
-                val_targets_tensor = torch.cat(val_targets, dim=0)
-                
-                # Calculate correlation
-                val_targets_np = val_targets_tensor.numpy().flatten()
-                val_predictions_np = val_predictions_tensor.numpy().flatten()
-                correlation = np.corrcoef(val_targets_np, val_predictions_np)[0, 1]
-                
-                # Clear memory
-                del val_predictions_tensor, val_targets_tensor
-            else:
-                correlation = 0.0
-            
-            # Log progress
-            if (epoch + 1) % 10 == 0:
-                logger.info(
-                    f"Epoch {epoch+1}/{hyperparams['num_epochs']}, "
-                    f"Train Loss: {train_loss:.4f}, "
-                    f"Val Loss: {val_loss:.4f}, "
-                    f"Correlation: {correlation:.4f}"
-                )
-        
-        # Calculate final metrics (simplified to save memory)
-        final_metrics = {
-            'final_train_loss': train_losses[-1],
-            'final_val_loss': val_losses[-1],
-            'final_correlation': correlation,
-            'best_val_loss': min(val_losses),
-            'best_correlation': correlation  # Use current correlation instead of complex calculation
-        }
-        
-        return model, train_losses, val_losses, final_metrics
+    print(f"[OK] Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    return model
+
+
+def create_learning_curves(train_losses, val_losses, output_dir):
+    """Create learning curve plots."""
+    logs_dir = os.path.join(output_dir, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
     
-    def optimize_hyperparameters(
-        self,
-        train_dataloader: torch.utils.data.DataLoader,
-        val_dataloader: torch.utils.data.DataLoader
-    ) -> Dict[str, Any]:
-        """
-        Optimize hyperparameters using Optuna (if available).
-        
-        Args:
-            train_dataloader: Training data loader
-            val_dataloader: Validation data loader
-            
-        Returns:
-            Best hyperparameters
-        """
-        if self.optuna_optimizer is None:
-            logger.info("Optuna not available - using default hyperparameters")
-            return self.config['hyperparameters']
-        
-        logger.info("Starting hyperparameter optimization...")
-        
-        # Run optimization
-        study = self.optuna_optimizer.optimize(
-            model_factory=self.create_model,
-            train_dataloader=train_dataloader,
-            val_dataloader=val_dataloader,
-            device=self.device,
-            input_length=self.config['hyperparameters']['input_length']
-        )
-        
-        # Get best parameters
-        best_params = self.optuna_optimizer.get_best_parameters()
-        best_value = self.optuna_optimizer.get_best_value()
-        
-        logger.info(f"Best hyperparameters: {best_params}")
-        logger.info(f"Best validation loss: {best_value}")
-        
-        # Save optimization results
-        optimization_results = {
-            'best_params': best_params,
-            'best_value': best_value,
-            'n_trials': len(study.trials),
-            'study_name': self.config['optuna']['study_name']
-        }
-        
-        # Save to file
-        optimization_file = os.path.join(self.output_dir, "optimization_results.json")
-        with open(optimization_file, 'w') as f:
-            json.dump(optimization_results, f, indent=2)
-        
-        return best_params
+    # Linear scale plot
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(1, len(train_losses) + 1), train_losses, label='Train Loss', color='blue')
+    plt.plot(range(1, len(val_losses) + 1), val_losses, label='Validation Loss', color='red')
+    plt.title('Learning Curve')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(logs_dir, 'learning_curve.png'), dpi=300, bbox_inches='tight')
+    plt.close()
     
-    def train_final_model(
-        self,
-        best_params: Dict[str, Any],
-        train_dataloader: torch.utils.data.DataLoader,
-        val_dataloader: torch.utils.data.DataLoader
-    ) -> Tuple[nn.Module, Dict[str, Any]]:
-        """
-        Train final model with best hyperparameters.
-        
-        Args:
-            best_params: Best hyperparameters from optimization
-            train_dataloader: Training data loader
-            val_dataloader: Validation data loader
-            
-        Returns:
-            Tuple of (trained_model, training_metrics)
-        """
-        logger.info("Training final model with best hyperparameters...")
-        
-        # Create model
-        model = self.create_model(best_params)
-        
-        # Train model
-        trained_model, train_losses, val_losses, metrics = self.train_model(
-            model, train_dataloader, val_dataloader, best_params
-        )
-        
-        # Save model
-        model_path = os.path.join(self.output_dir, "final_model.pth")
-        torch.save(trained_model.state_dict(), model_path)
-        logger.info(f"Model saved to: {model_path}")
-        
-        # Create learning curve plot
-        fig = self.mlflow_tracker.create_learning_curve_plot(
-            train_losses, val_losses,
-            save_path=os.path.join(self.output_dir, "learning_curve.png")
-        )
-        plt.close(fig)
-        
-        return trained_model, {
-            'train_losses': train_losses,
-            'val_losses': val_losses,
-            'metrics': metrics
-        }
+    # Log scale plot
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(1, len(train_losses) + 1), [np.log(l) for l in train_losses], label='Train Log(Loss)', color='blue')
+    plt.plot(range(1, len(val_losses) + 1), [np.log(l) for l in val_losses], label='Validation Log(Loss)', color='red')
+    plt.title('Learning Curve (Log Scale)')
+    plt.xlabel('Epoch')
+    plt.ylabel('Log(Loss)')
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(logs_dir, 'learning_curve_log.png'), dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+@hydra.main(config_path="config", config_name="config_real_updated.yaml", version_base=None)
+def main(cfg):
+    """Main training function with Hydra configuration."""
     
-    def run_training(self) -> Dict[str, Any]:
-        """
-        Run the complete training pipeline.
-        
-        Returns:
-            Dictionary containing training results
-        """
-        logger.info("Starting training pipeline...")
-        
-        # Skip dataset info to avoid memory issues with large datasets
-        # dataset_info = get_dataset_info(
-        #     self.config['dataset']['x_train'],
-        #     self.config['dataset']['t_train'],
-        #     self.config['dataset']['data_keys']['x_key'],
-        #     self.config['dataset']['data_keys']['t_key']
-        # )
-        
-        # Create dummy dataset info for logging
-        dataset_info = {
-            'x_shape': 'Unknown (large dataset)',
-            'x_dtype': 'float32',
-            't_shape': 'Unknown (large dataset)',
-            't_dtype': 'float32',
-            'n_samples': 'Unknown (large dataset)',
-            'x_size_mb': 'Unknown (large dataset)',
-            't_size_mb': 'Unknown (large dataset)'
-        }
-        
-        logger.info(f"Dataset info: {dataset_info}")
-        
-        # Create dataloaders using ultra memory-efficient loader
-        from src.data_loader import create_ultra_memory_efficient_dataloader
-        
-        train_dataloader, val_dataloader = create_ultra_memory_efficient_dataloader(
-            x_path=self.config['dataset']['x_train'],
-            t_path=self.config['dataset']['t_train'],
-            target_memory_gb=1.5,  # Use only 1.5GB of GPU memory
-            x_key=self.config['dataset']['data_keys']['x_key'],
-            t_key=self.config['dataset']['data_keys']['t_key'],
-            max_samples=self.config['training']['max_samples_per_epoch'],
-            shuffle=True
-        )
-        
-        logger.info(f"Created dataloaders: {len(train_dataloader)} train batches, {len(val_dataloader)} val batches")
-        
-        # Start MLflow run (if available)
-        if self.mlflow_tracker is not None:
-            self.mlflow_tracker.start_run(
-                run_name=f"real_data_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                tags={
-                    "dataset": "real_data",
-                    "model": self.config['model']['name'],
-                    "optimization": "optuna" if self.optuna_optimizer is not None else "default"
-                }
-            )
-        
+    # Prevent Hydra from creating output directories in sandbox/ml_airlift
+    # Get the original working directory (before Hydra changes it)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    sandbox_dir = "/home/smatsubara/documents/sandbox/ml_airlift"
+    
+    # Check and remove Hydra-created output directories in sandbox/ml_airlift
+    outputs_dir = os.path.join(sandbox_dir, "outputs")
+    if os.path.exists(outputs_dir):
         try:
-            # Log configuration and dataset info (if MLflow available)
-            if self.mlflow_tracker is not None:
-                self.mlflow_tracker.log_parameters(self.config['hyperparameters'])
-                self.mlflow_tracker.log_parameters(self.config['model'])
-                self.mlflow_tracker.log_dataset_info(dataset_info)
-            
-            # Optimize hyperparameters
-            best_params = self.optimize_hyperparameters(train_dataloader, val_dataloader)
-            
-            # Log optimization results (if MLflow available)
-            if self.mlflow_tracker is not None and self.optuna_optimizer is not None:
-                optimization_results = {
-                    'best_params': best_params,
-                    'best_value': self.optuna_optimizer.get_best_value(),
-                    'n_trials': self.optuna_optimizer.n_trials
-                }
-                self.mlflow_tracker.log_optimization_results(optimization_results)
-            
-            # Train final model
-            final_model, training_results = self.train_final_model(
-                best_params, train_dataloader, val_dataloader
-            )
-            
-            # Log final metrics (if MLflow available)
-            if self.mlflow_tracker is not None:
-                self.mlflow_tracker.log_metrics(training_results['metrics'])
-                self.mlflow_tracker.log_training_history(
-                    training_results['train_losses'],
-                    training_results['val_losses']
-                )
-                
-                # Log model
-                self.mlflow_tracker.log_model(
-                    final_model,
-                    model_name="final_model",
-                    registered_model_name=f"real_data_{self.config['model']['name']}"
-                )
-                
-                # Log artifacts
-                self.mlflow_tracker.log_artifacts(self.output_dir, "training_outputs")
-            
-            logger.info("Training pipeline completed successfully")
-            
-            return {
-                'model': final_model,
-                'best_params': best_params,
-                'training_results': training_results,
-                'dataset_info': dataset_info,
-                'output_dir': self.output_dir
-            }
-            
-        finally:
-            # End MLflow run (if available)
-            if self.mlflow_tracker is not None:
-                self.mlflow_tracker.end_run()
-
-
-def main():
-    """Main function to run training."""
-    # Setup CUDA memory optimization FIRST
-    from src.data_loader import setup_cuda_memory_optimization
-    setup_cuda_memory_optimization()
+            shutil.rmtree(outputs_dir)
+            print(f"[INFO] Removed Hydra output directory: {outputs_dir}")
+        except Exception as e:
+            print(f"[WARN] Could not remove Hydra output directory {outputs_dir}: {e}")
     
-    # Load configuration
-    config_path = "/home/smatsubara/documents/sandbox/ml_airlift/config/config_real.yaml"
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+    # Create time-based output directory under airlift/data/outputs_real/YYYY-MM-DD/HH-MM-SS
+    outputs_root = "/home/smatsubara/documents/airlift/data/outputs_real"
+    now = datetime.datetime.now()
+    run_dir = os.path.join(outputs_root, now.strftime('%Y-%m-%d'), now.strftime('%H-%M-%S'))
+    base_dir = run_dir
+    logs_dir = os.path.join(run_dir, "logs")
+    weights_dir = os.path.join(run_dir, "weights")
+    os.makedirs(logs_dir, exist_ok=True)
+    os.makedirs(weights_dir, exist_ok=True)
+    print(f"[INFO] Run directory: {os.path.abspath(run_dir)}")
+    print(f"[INFO] Logs will be saved under: {os.path.abspath(logs_dir)}")
     
-    # Set random seeds
-    torch.manual_seed(config['hyperparameters']['seed'])
-    np.random.seed(config['hyperparameters']['seed'])
+    # Print configuration
+    print("🔧 Configuration Summary")
+    print("=" * 50)
+    print(f"Dataset X: {cfg.dataset.x_train}")
+    print(f"Dataset T: {cfg.dataset.t_train}")
+    print(f"Model: {cfg.model.type}")
+    print(f"Epochs: {cfg.training.epochs}")
+    print(f"Batch size: {cfg.training.batch_size}")
+    print(f"Learning rate: {cfg.training.learning_rate}")
+    print(f"Device: {cfg.training.device}")
+    print("=" * 50)
     
-    # Create trainer
-    trainer = RealDataTrainer(config)
+    # Set reproducibility
+    torch.manual_seed(cfg.training.seed)
+    np.random.seed(cfg.training.seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
     
-    # Run training
-    results = trainer.run_training()
+    t0 = time.time()
     
-    logger.info(f"Training completed. Results saved to: {results['output_dir']}")
-    logger.info(f"Best parameters: {results['best_params']}")
-    logger.info(f"Final metrics: {results['training_results']['metrics']}")
+    # Load data
+    print("[STEP] Loading dataset files...")
+    x, t = load_npz_pair(cfg.dataset.x_train, cfg.dataset.t_train, cfg.dataset.x_key, cfg.dataset.t_key)
+    print(f"[OK] Loaded. x.shape={x.shape}, t.shape={t.shape} (elapsed {time.time()-t0:.2f}s)")
+    
+    # Check for NaNs
+    if np.isnan(x).any():
+        print("[WARNING] NaN values detected in x!")
+    else:
+        print("[INFO] No NaN values in x.")
+    if np.isnan(t).any():
+        print("[WARNING] NaN values detected in t!")
+    else:
+        print("[INFO] No NaN values in t.")
+    
+    # Print data info for 4D case
+    if x.ndim == 4:
+        print(f"[INFO] 4D Image Data: N={x.shape[0]}, C={x.shape[1]}, H={x.shape[2]}, W={x.shape[3]}")
+        print(f"[INFO] Target shape: {t.shape} (6 targets for multi-output regression)")
+        print(f"[INFO] Memory usage: {x.nbytes / 1024**2:.1f} MB")
+    
+    # Limit samples if specified
+    if cfg.dataset.limit_samples > 0:
+        n = min(cfg.dataset.limit_samples, x.shape[0])
+        x = x[:n]
+        t = t[:n]
+        print(f"[INFO] Limited to first {n} samples")
+    
+    # Optional downsampling
+    if x.ndim == 4 and cfg.dataset.downsample_factor > 1:
+        h0 = x.shape[2]
+        x = x[:, :, ::cfg.dataset.downsample_factor, :]
+        print(f"[INFO] Downsampled H: {h0} -> {x.shape[2]} (factor={cfg.dataset.downsample_factor})")
+    elif x.ndim == 4:
+        print(f"[INFO] Using full resolution: H={x.shape[2]}, W={x.shape[3]}")
+    
+    # Create dataset
+    print("[STEP] Build dataset tensors...")
+    dataset = to_tensor_dataset(x, t, cfg.training.device)
+    print("[OK] Dataset ready.")
+    
+    # Split dataset
+    print("[STEP] Split dataset...")
+    train_set, val_set, test_set = split_dataset(
+        dataset, 
+        cfg.data_split.train_ratio, 
+        cfg.data_split.val_ratio, 
+        cfg.data_split.test_ratio, 
+        cfg.training.seed
+    )
+    print(f"[OK] Sizes -> train={len(train_set)}, val={len(val_set)}, test={len(test_set)}")
+    
+    # Create dataloaders
+    print("[STEP] Build dataloaders...")
+    train_loader = DataLoader(
+        train_set, 
+        batch_size=cfg.training.batch_size, 
+        shuffle=True, 
+        num_workers=cfg.training.workers, 
+        pin_memory=cfg.training.pin_memory
+    )
+    val_loader = DataLoader(
+        val_set, 
+        batch_size=cfg.training.batch_size, 
+        shuffle=False, 
+        num_workers=cfg.training.workers, 
+        pin_memory=cfg.training.pin_memory
+    )
+    test_loader = DataLoader(
+        test_set, 
+        batch_size=cfg.training.batch_size, 
+        shuffle=False, 
+        num_workers=cfg.training.workers, 
+        pin_memory=cfg.training.pin_memory
+    )
+    print("[OK] Dataloaders ready.")
+    
+    # Create model
+    print("[STEP] Build model...")
+    x_sample = dataset.tensors[0]
+    device = torch.device(cfg.training.device)
+    out_dim = dataset.tensors[1].shape[1] if dataset.tensors[1].ndim == 2 else 1
+    model = create_model(cfg, x_sample, out_dim, device)
+    
+    # Create optimizer and loss
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=cfg.training.learning_rate)
+    
+    # Training
+    print("[STEP] Training...")
+    print(f"[INFO] Training {x_sample.shape[1]}-channel image data with {out_dim} output targets")
+    print(f"[INFO] Batch size: {cfg.training.batch_size}, Epochs: {cfg.training.epochs}")
+    
+    train_losses = []
+    val_losses = []
+    
+    for epoch in range(1, cfg.training.epochs + 1):
+        t_ep = time.time()
+        tr = train_one_epoch(model, train_loader, criterion, optimizer, device, cfg.logging.print_every_n_batches)
+        
+        # Evaluate validation set if it exists
+        if len(val_loader.dataset) > 0:
+            val_mse, val_mae, _, _ = evaluate(model, val_loader, criterion, device)
+        else:
+            val_mse, val_mae = 0.0, 0.0
+        
+        train_losses.append(tr)
+        val_losses.append(val_mse)
+        
+        if epoch % cfg.logging.print_every_n_epochs == 0:
+            if len(val_loader.dataset) > 0:
+                print(f"Epoch {epoch:03d} | train MSE={tr:.6f} | val MSE={val_mse:.6f} | val MAE={val_mae:.6f} | {time.time()-t_ep:.2f}s")
+            else:
+                print(f"Epoch {epoch:03d} | train MSE={tr:.6f} | val MSE=N/A | val MAE=N/A | {time.time()-t_ep:.2f}s")
+    
+    # Testing
+    print("[STEP] Testing...")
+    test_mse, test_mae, y_pred, y_true = evaluate(model, test_loader, criterion, device)
+    print(f"Test  | MSE={test_mse:.6f} | MAE={test_mae:.6f}")
+    
+    # Print per-target results for multi-output regression
+    if y_pred.shape[1] > 1:
+        print(f"[INFO] Per-target results:")
+        for i in range(y_pred.shape[1]):
+            target_mse = np.mean((y_pred[:, i] - y_true[:, i])**2)
+            target_mae = np.mean(np.abs(y_pred[:, i] - y_true[:, i]))
+            print(f"  Target {i+1}: MSE={target_mse:.6f}, MAE={target_mae:.6f}")
+    
+    # Save model and results
+    print("[STEP] Saving model and results...")
+    torch.save(model.state_dict(), os.path.join(weights_dir, cfg.output.model_filename))
+    np.save(os.path.join(base_dir, cfg.output.predictions_filename), y_pred)
+    np.save(os.path.join(base_dir, cfg.output.ground_truth_filename), y_true)
+    print(f"[OK] Saved to {base_dir}")
+    
+    # Create learning curves
+    print("[STEP] Creating learning curves...")
+    create_learning_curves(train_losses, val_losses, base_dir)
+    
+    # Create evaluation plots if requested
+    if cfg.evaluation.create_plots and y_pred.shape[1] > 1:
+        print("[STEP] Creating evaluation plots...")
+        plots_dir = os.path.join(base_dir, cfg.output.evaluation_plots_dir)
+        create_prediction_plots(y_pred, y_true, plots_dir, cfg.evaluation.target_names)
+        print(f"[OK] Evaluation plots saved to {plots_dir}")
+    
+    # Save configuration
+    with open(os.path.join(base_dir, "config.yaml"), 'w') as f:
+        OmegaConf.save(cfg, f)
+    print(f"[OK] Configuration saved to {base_dir}/config.yaml")
+    
+    print(f"[DONE] Training completed. Total elapsed {time.time()-t0:.2f}s")
+    print(f"[DONE] Results saved to: {base_dir}")
+    
+    # Clean up Hydra-created output directories in sandbox/ml_airlift
+    outputs_dir = os.path.join(sandbox_dir, "outputs")
+    if os.path.exists(outputs_dir):
+        try:
+            shutil.rmtree(outputs_dir)
+            print(f"[INFO] Cleaned up Hydra output directory: {outputs_dir}")
+        except Exception as e:
+            print(f"[WARN] Could not remove Hydra output directory {outputs_dir}: {e}")
 
 
 if __name__ == "__main__":

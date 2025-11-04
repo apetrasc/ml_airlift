@@ -331,3 +331,65 @@ class PFNet(nn.Module):
         x = self.fc3(x)
         
         return x
+
+class SimpleCNNReal(nn.Module):
+    """Simple 1D CNN for real dataset regression.
+
+    Expected input: (batch, in_channels, length)
+    Keeps architecture minimal and robust for quick experiments.
+    """
+    def __init__(self, input_length: int, in_channels: int = 1, hidden: int = 32, out_dim: int = 1):
+        super(SimpleCNNReal, self).__init__()
+        self.out_dim = out_dim
+        # A light two-layer Conv1d stack + GAP + Linear head
+        self.features = nn.Sequential(
+            nn.Conv1d(in_channels, hidden, kernel_size=11, padding=5, bias=False),
+            nn.BatchNorm1d(hidden),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(hidden, hidden // 2, kernel_size=7, padding=3, bias=False),
+            nn.BatchNorm1d(hidden // 2),
+            nn.ReLU(inplace=True),
+        )
+        self.gap = nn.AdaptiveAvgPool1d(1)
+        self.head = nn.Linear(hidden // 2, out_dim)
+
+    def forward(self, x):
+        # x: (batch, in_channels, length)
+        x = self.features(x)
+        x = self.gap(x).view(x.size(0), -1)
+        x = self.head(x)
+        return x.squeeze(1) if self.out_dim == 1 else x
+
+class SimpleCNNReal2D(nn.Module):
+    """Simple 2D CNN for NCHW inputs.
+
+    Expected input: (batch, in_channels, height, width)
+    Minimal two-conv stack + GAP + Linear head for regression.
+    """
+    def __init__(self, in_channels: int = 1, hidden: int = 32, out_dim: int = 1, resize_hw: tuple = None):
+        super(SimpleCNNReal2D, self).__init__()
+        self.out_dim = out_dim
+        # Optional pre-resize to drastically reduce memory
+        self.prepool = None
+        if resize_hw is not None:
+            h, w = resize_hw
+            self.prepool = nn.AdaptiveAvgPool2d((h, w))
+        self.features = nn.Sequential(
+            nn.Conv2d(in_channels, hidden, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden, hidden // 2, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden // 2),
+            nn.ReLU(inplace=True),
+        )
+        self.gap = nn.AdaptiveAvgPool2d((1, 1))
+        self.head = nn.Linear(hidden // 2, out_dim)
+
+    def forward(self, x):
+        # x: (batch, in_channels, height, width)
+        if self.prepool is not None:
+            x = self.prepool(x)
+        x = self.features(x)
+        x = self.gap(x).view(x.size(0), -1)
+        x = self.head(x)
+        return x.squeeze(1) if self.out_dim == 1 else x

@@ -14,15 +14,22 @@ from src import npz2png
 from torch.nn import init
 
 import hydra
+import datetime
 from omegaconf import OmegaConf
 
 @hydra.main(config_path="config", config_name="config.yaml")
 def main(cfg):
 
-    # Get hydra run directory as base path
+    # Get hydra run directory as base path for reading relative inputs
     base_dir = os.getcwd()
-    logs_dir = os.path.join(base_dir, "logs")
+    # Create time-based output directory under airlift/data/outputs/YYYY-MM-DD/HH-MM-SS
+    outputs_root = "/home/smatsubara/documents/airlift/data/outputs"
+    now = datetime.datetime.now()
+    run_dir = os.path.join(outputs_root, now.strftime('%Y-%m-%d'), now.strftime('%H-%M-%S'))
+    logs_dir = os.path.join(run_dir, "logs")
     os.makedirs(logs_dir, exist_ok=True)
+    print(f"Run directory: {os.path.abspath(run_dir)}")
+    print(f"Logs will be saved under: {os.path.abspath(logs_dir)}")
     # Load config (already loaded as cfg)
     x_train = np.load(os.path.relpath(cfg.dataset.x_train, base_dir))
     t_train = np.load(os.path.relpath(cfg.dataset.t_train, base_dir))
@@ -151,10 +158,9 @@ def main(cfg):
         if (epoch + 1) % 100 == 0:
             print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {epoch_loss:.4f}, Val Loss: {val_epoch_loss:.4f}")
 
-    weights_dir = os.path.join(base_dir, "weights")
-    
+    # Create weights directory inside the same run directory structure
+    weights_dir = os.path.join(run_dir, "weights")
     os.makedirs(weights_dir, exist_ok=True)
-    os.makedirs(logs_dir, exist_ok=True)
     sota_dir="/home/smatsubara/documents/sandbox/ml_airlift/models/layernorm/weights"
     #torch.save(model.state_dict(), os.path.join(sota_dir, 'model.pth'))
     torch.save(model.state_dict(), os.path.join(weights_dir, 'model.pth'))
@@ -195,6 +201,8 @@ def main(cfg):
             val_targets.append(val_y.cpu())
     val_predictions = torch.cat(val_predictions, dim=0)
     val_targets = torch.cat(val_targets, dim=0)
+    accuracy = torch.sqrt(torch.mean(torch.abs(val_predictions - val_targets)**2))
+    print(f"Root Mean Square Error: {accuracy:.4f}")
     print("Validation predictions shape:", val_predictions.shape)
     print("Validation targets shape:", val_targets.shape)
     print(val_predictions)
@@ -240,8 +248,8 @@ def main(cfg):
                 plt.grid(True)
         plt.suptitle('First Conv1d Layer Kernels')
         plt.tight_layout()
-        plt.show()
         plt.savefig(os.path.join(logs_dir, 'kernels.png'))
+        plt.show()
     else:
         print("No Conv1d layer found in the model.")
 
@@ -260,7 +268,7 @@ def main(cfg):
             def backward_hook(module, grad_in, grad_out):
                 self.gradients = grad_out[0].detach()
             self.hook_handles.append(self.target_layer.register_forward_hook(forward_hook))
-            self.hook_handles.append(self.target_layer.register_backward_hook(backward_hook))
+            self.hook_handles.append(self.target_layer.register_full_backward_hook(backward_hook))
 
         def __call__(self, input_tensor, class_idx=None):
             self.model.zero_grad()
@@ -293,10 +301,16 @@ def main(cfg):
             break
 
     if target_layer_1d is not None:
+        # Enable gradients for the target conv layer
+        if hasattr(target_layer_1d, 'weight') and target_layer_1d.weight is not None:
+            target_layer_1d.weight.requires_grad_(True)
+        if hasattr(target_layer_1d, 'bias') and target_layer_1d.bias is not None:
+            target_layer_1d.bias.requires_grad_(True)
         grad_cam_1d = GradCAM1d(model, target_layer_1d)
         for val_x, _ in val_dataloader:
             sample_input = val_x[0].unsqueeze(0).to(cfg.evaluation.device)
             break
+        sample_input.requires_grad_(True)
         grad_cam_map = grad_cam_1d(sample_input)
         grad_cam_1d.remove_hooks()
         plt.figure(figsize=(10, 4))
@@ -306,8 +320,8 @@ def main(cfg):
         plt.ylabel('Grad-CAM Intensity')
         plt.grid(True)
         plt.tight_layout()
-        plt.show()
         plt.savefig(os.path.join(logs_dir, 'grad_cam_map.png'))
+        plt.show()
     else:
         print("No Conv1d layer found for Grad-CAM.")
 
