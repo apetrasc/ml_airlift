@@ -360,36 +360,127 @@ class SimpleCNNReal(nn.Module):
         x = self.head(x)
         return x.squeeze(1) if self.out_dim == 1 else x
 
+class ResidualBlock2D(nn.Module):
+    """2D Residual Block for CNN."""
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int = 3, stride: int = 1, dropout_rate: float = 0.0):
+        super(ResidualBlock2D, self).__init__()
+        padding = kernel_size // 2
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.dropout = nn.Dropout2d(dropout_rate) if dropout_rate > 0 else nn.Identity()
+        
+        # Downsample if needed
+        if in_channels != out_channels or stride != 1:
+            self.downsample = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels)
+            )
+        else:
+            self.downsample = None
+        
+        self.relu2 = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        identity = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu1(out)
+        out = self.dropout(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        
+        if self.downsample is not None:
+            identity = self.downsample(identity)
+        
+        out += identity
+        out = self.relu2(out)
+        return out
+
+
 class SimpleCNNReal2D(nn.Module):
-    """Simple 2D CNN for NCHW inputs.
+    """Improved 2D CNN for NCHW inputs with deeper architecture and residual blocks.
 
     Expected input: (batch, in_channels, height, width)
-    Minimal two-conv stack + GAP + Linear head for regression.
+    Architecture:
+    - Pre-resize (optional)
+    - Initial conv layer
+    - Multiple residual blocks with increasing channels
+    - Global Average Pooling
+    - Fully connected head with dropout
     """
-    def __init__(self, in_channels: int = 1, hidden: int = 32, out_dim: int = 1, resize_hw: tuple = None):
+    def __init__(self, in_channels: int = 1, hidden: int = 32, out_dim: int = 1, 
+                 resize_hw: tuple = None, dropout_rate: float = 0.2, use_residual: bool = True):
         super(SimpleCNNReal2D, self).__init__()
         self.out_dim = out_dim
+        self.use_residual = use_residual
+        
         # Optional pre-resize to drastically reduce memory
         self.prepool = None
         if resize_hw is not None:
             h, w = resize_hw
             self.prepool = nn.AdaptiveAvgPool2d((h, w))
-        self.features = nn.Sequential(
-            nn.Conv2d(in_channels, hidden, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(hidden),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(hidden, hidden // 2, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(hidden // 2),
-            nn.ReLU(inplace=True),
-        )
-        self.gap = nn.AdaptiveAvgPool2d((1, 1))
-        self.head = nn.Linear(hidden // 2, out_dim)
+        
+        if use_residual:
+            # Improved architecture with residual blocks
+            # Initial conv layer
+            self.initial_conv = nn.Sequential(
+                nn.Conv2d(in_channels, hidden, kernel_size=7, stride=2, padding=3, bias=False),
+                nn.BatchNorm2d(hidden),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+            )
+            
+            # Residual blocks with increasing channels: hidden -> 2*hidden -> 4*hidden
+            self.layer1 = ResidualBlock2D(hidden, hidden, kernel_size=3, stride=1, dropout_rate=dropout_rate)
+            self.layer2 = ResidualBlock2D(hidden, 2 * hidden, kernel_size=3, stride=2, dropout_rate=dropout_rate)
+            self.layer3 = ResidualBlock2D(2 * hidden, 4 * hidden, kernel_size=3, stride=2, dropout_rate=dropout_rate)
+            self.layer4 = ResidualBlock2D(4 * hidden, 4 * hidden, kernel_size=3, stride=1, dropout_rate=dropout_rate)
+            
+            # Global Average Pooling
+            self.gap = nn.AdaptiveAvgPool2d((1, 1))
+            
+            # Final head with dropout
+            self.head = nn.Sequential(
+                nn.Dropout(dropout_rate),
+                nn.Linear(4 * hidden, 2 * hidden),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout_rate),
+                nn.Linear(2 * hidden, out_dim)
+            )
+        else:
+            # Original simple architecture (backward compatibility)
+            self.features = nn.Sequential(
+                nn.Conv2d(in_channels, hidden, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(hidden),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(hidden, hidden // 2, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(hidden // 2),
+                nn.ReLU(inplace=True),
+            )
+            self.gap = nn.AdaptiveAvgPool2d((1, 1))
+            self.head = nn.Linear(hidden // 2, out_dim)
 
     def forward(self, x):
         # x: (batch, in_channels, height, width)
         if self.prepool is not None:
             x = self.prepool(x)
-        x = self.features(x)
-        x = self.gap(x).view(x.size(0), -1)
-        x = self.head(x)
+        
+        if self.use_residual:
+            # Improved forward pass with residual blocks
+            x = self.initial_conv(x)
+            x = self.layer1(x)
+            x = self.layer2(x)
+            x = self.layer3(x)
+            x = self.layer4(x)
+            x = self.gap(x).view(x.size(0), -1)
+            x = self.head(x)
+        else:
+            # Original forward pass
+            x = self.features(x)
+            x = self.gap(x).view(x.size(0), -1)
+            x = self.head(x)
+        
         return x.squeeze(1) if self.out_dim == 1 else x

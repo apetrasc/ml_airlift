@@ -2,8 +2,8 @@
 
 # Data configuration
 dataset:
-  x_train: /home/smatsubara/documents/airlift/data/experiments/cleaned_data/x_train_real_cleaned.npy
-  t_train: /home/smatsubara/documents/airlift/data/experiments/cleaned_data/t_train_real_cleaned.npy
+  x_train: /home/smatsubara/documents/airlift/data/cleaned/x_train_real_cleaned.npy
+  t_train: /home/smatsubara/documents/airlift/data/cleaned/t_train_real_cleaned.npy
   x_key: x_train_real
   t_key: t_train_real
   limit_samples: 0  # 0 means use all samples
@@ -15,14 +15,16 @@ model:
   in_channels: 4
   out_dim: 6  # 6 target variables
   resize_hw: null  # null means no resizing, use full resolution
-  dropout_rate: 0.0
+  dropout_rate: 0.2  # Dropout rate for regularization (0.0-0.5 recommended)
+  use_residual: true  # Use improved residual architecture (true) or original simple architecture (false)
+  hidden: 64  # Base number of hidden channels (will be expanded to 64 -> 128 -> 256)
 
 # Training hyperparameters
 training:
   device: cuda:0
-  epochs: 200
-  batch_size: 4
-  learning_rate: 0.001
+  epochs: 500
+  batch_size: 8
+  learning_rate: 0.0001
   workers: 0
   pin_memory: false
   seed: 42

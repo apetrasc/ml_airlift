@@ -168,11 +168,24 @@ def create_model(cfg, x_sample: torch.Tensor, out_dim: int, device: torch.device
             resize_hw = tuple(resize_hw)
         else:
             resize_hw = None
+        
+        # Get model hyperparameters from config
+        dropout_rate = cfg.model.get('dropout_rate', 0.2)
+        use_residual = cfg.model.get('use_residual', True)
+        hidden = cfg.model.get('hidden', 64)
             
-        model = SimpleCNNReal2D(in_channels=in_channels, out_dim=out_dim, resize_hw=resize_hw).to(device)
+        model = SimpleCNNReal2D(
+            in_channels=in_channels, 
+            out_dim=out_dim, 
+            resize_hw=resize_hw,
+            dropout_rate=dropout_rate,
+            use_residual=use_residual,
+            hidden=hidden
+        ).to(device)
         print(f"[OK] Using Conv2d model for {in_channels}-channel image data")
         print(f"[OK] Input: (N, {in_channels}, {x_nchw.shape[2]}, {x_nchw.shape[3]}) -> Output: (N, {out_dim})")
         print(f"[OK] Resize: {resize_hw if resize_hw else 'Full resolution'}")
+        print(f"[OK] Architecture: {'Residual' if use_residual else 'Simple'}, Hidden: {hidden}, Dropout: {dropout_rate}")
         
     else:
         raise RuntimeError("Unexpected tensor ndim for model selection")
