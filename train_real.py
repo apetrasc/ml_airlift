@@ -108,14 +108,21 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, print_every
     """Train model for one epoch."""
     model.train()
     total = 0.0
+    use_cuda = device.type == 'cuda'
+    scaler = getattr(train_one_epoch, "_scaler", None)
+    if scaler is None:
+        scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
+        setattr(train_one_epoch, "_scaler", scaler)
     for i, (xb, yb) in enumerate(dataloader):
         xb = xb.to(device)
         yb = yb.to(device)
-        optimizer.zero_grad()
-        pred = model(xb)
-        loss = criterion(pred, yb)
-        loss.backward()
-        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+        with torch.cuda.amp.autocast(enabled=use_cuda):
+            pred = model(xb)
+            loss = criterion(pred, yb)
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
         total += loss.item() * xb.size(0)
         if (i + 1) % print_every == 0:
             print(f"  [train] step {i+1}/{len(dataloader)} loss={loss.item():.6f}")
@@ -128,11 +135,13 @@ def evaluate(model, dataloader, criterion, device):
     model.eval()
     total = 0.0
     preds, targets = [], []
+    use_cuda = device.type == 'cuda'
     for xb, yb in dataloader:
         xb = xb.to(device)
         yb = yb.to(device)
-        pred = model(xb)
-        loss = criterion(pred, yb)
+        with torch.cuda.amp.autocast(enabled=use_cuda):
+            pred = model(xb)
+            loss = criterion(pred, yb)
         total += loss.item() * xb.size(0)
         preds.append(pred.cpu())
         targets.append(yb.cpu())
@@ -144,14 +153,13 @@ def evaluate(model, dataloader, criterion, device):
 
 
 def create_model(cfg, x_sample: torch.Tensor, out_dim: int, device: torch.device):
-    """Create model based on configuration and data shape."""
+    """Create model based on configuration and data shape, with OOM-safe device move."""
     if x_sample.ndim == 3:
         # 1D CNN
         in_channels = x_sample.shape[1]
         length = x_sample.shape[2]
-        model = SimpleCNNReal(input_length=length, in_channels=in_channels, out_dim=out_dim).to(device)
+        model = SimpleCNNReal(input_length=length, in_channels=in_channels, out_dim=out_dim)
         print(f"[OK] Using Conv1d model (C={in_channels}, L={length})")
-        
     elif x_sample.ndim == 4:
         # 2D CNN for image data
         if x_sample.shape[1] not in (1, 3, 4):
@@ -159,24 +167,31 @@ def create_model(cfg, x_sample: torch.Tensor, out_dim: int, device: torch.device
             print("[INFO] Transposed NHWC -> NCHW")
         else:
             x_nchw = x_sample
-            
         in_channels = x_nchw.shape[1]
-        
         # Get resize parameters from config
         resize_hw = cfg.model.resize_hw
         if resize_hw and resize_hw[0] > 0 and resize_hw[1] > 0:
             resize_hw = tuple(resize_hw)
         else:
             resize_hw = None
-            
-        model = SimpleCNNReal2D(in_channels=in_channels, out_dim=out_dim, resize_hw=resize_hw).to(device)
+        model = SimpleCNNReal2D(in_channels=in_channels, out_dim=out_dim, resize_hw=resize_hw)
         print(f"[OK] Using Conv2d model for {in_channels}-channel image data")
         print(f"[OK] Input: (N, {in_channels}, {x_nchw.shape[2]}, {x_nchw.shape[3]}) -> Output: (N, {out_dim})")
         print(f"[OK] Resize: {resize_hw if resize_hw else 'Full resolution'}")
-        
     else:
         raise RuntimeError("Unexpected tensor ndim for model selection")
-    
+
+    # Try moving to device; on OOM retry with half precision
+    try:
+        model = model.to(device)
+    except RuntimeError as e:
+        if device.type == 'cuda' and 'out of memory' in str(e).lower():
+            print("[WARN] OOM while moving model to GPU. Retrying with half precision (fp16)...")
+            torch.cuda.empty_cache()
+            model = model.half().to(device)
+        else:
+            raise
+
     print(f"[OK] Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     return model
 
@@ -232,7 +247,7 @@ def main(cfg):
             print(f"[WARN] Could not remove Hydra output directory {outputs_dir}: {e}")
     
     # Create time-based output directory under airlift/data/outputs_real/YYYY-MM-DD/HH-MM-SS
-    outputs_root = "/home/smatsubara/documents/airlift/data/outputs_real"
+    outputs_root = cfg.output.model_save_dir
     now = datetime.datetime.now()
     run_dir = os.path.join(outputs_root, now.strftime('%Y-%m-%d'), now.strftime('%H-%M-%S'))
     base_dir = run_dir
@@ -258,9 +273,10 @@ def main(cfg):
     # Set reproducibility
     torch.manual_seed(cfg.training.seed)
     np.random.seed(cfg.training.seed)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
-    
+
+    # cuDNN autotune for convs
+    torch.backends.cudnn.benchmark = True
+
     t0 = time.time()
     
     # Load data
@@ -343,7 +359,7 @@ def main(cfg):
     # Create model
     print("[STEP] Build model...")
     x_sample = dataset.tensors[0]
-    device = torch.device(cfg.training.device)
+    device = get_valid_device(cfg.training.device)
     out_dim = dataset.tensors[1].shape[1] if dataset.tensors[1].ndim == 2 else 1
     model = create_model(cfg, x_sample, out_dim, device)
     

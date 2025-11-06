@@ -13,8 +13,8 @@ import torch.nn.functional as F
 with open('config/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
 
-base_dir = "/home/smatsubara/documents/airlift/data/results"
-file_path = "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20241007-1401_processed.npz"
+base_dir = "/mnt/matsubara/pictures"
+file_path = "/mnt/matsubara/signals_exp/processed_data/all/P20240726-1601_processed.npz"
 # Load the trained model
 model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 #model = ResidualCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
@@ -92,10 +92,10 @@ def preprocess_for_gradcam(file_path, sample_index=500, channel_index=0):
     if not (0 <= channel_index < C):
         raise RuntimeError(f"Invalid channel_index {channel_index}, C={C}")
     signal = x[sample_index, :, channel_index]
-    mean = np.mean(signal)
-    std = np.std(signal)
-    std = std if std > 1e-8 else 1e-8
-    signal = (signal - mean) / std
+    # mean = np.mean(signal)
+    # std = np.std(signal)
+    # std = std if std > 1e-8 else 1e-8
+    # signal = (signal - mean) / std
     signal = torch.tensor(signal, dtype=torch.float32)
     signal = signal.unsqueeze(0).unsqueeze(0)  # [1, 1, L]
     return signal
