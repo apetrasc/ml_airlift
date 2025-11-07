@@ -19,10 +19,14 @@ from src.evaluate_predictions import create_prediction_plots
 import matplotlib.pyplot as plt
 
 import optuna
-from optuna import Trial
+from optuna.trial import Trial
+import Trial
 from omegaconf import OmegaConf, DictConfig
 import torch
 import torch.nn as nn
+
+# Load config using OmegaConf to enable attribute access
+config = OmegaConf.load('config/config_real_updated.yaml')
 
 # Import functions from train_real.py
 from train_real import (
@@ -36,9 +40,9 @@ from train_real import (
 )
 
 # Paths
-OPTUNA_DIR = "/home/smatsubara/documents/airlift/data/sandbox/optuna"
-OUTPUTS_ROOT = "/home/smatsubara/documents/airlift/data/outputs_real"
-BASE_CONFIG_PATH = "/home/smatsubara/documents/sandbox/ml_airlift/config/config_real_updated.yaml"
+OPTUNA_DIR = config.optuna.dir
+OUTPUTS_ROOT = config.optuna.outputs_dir
+BASE_CONFIG_PATH = config.optuna.base_config_path
 
 
 def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
@@ -251,6 +255,20 @@ def objective(trial: Trial, base_config_path: str) -> float:
             cfg.dataset.t_key
         )
         print(f"[OK] Loaded. x.shape={x.shape}, t.shape={t.shape}")
+        
+        # Exclude Channel 1 and Channel 3 (keep only channels 0, 2)
+        if x.ndim == 4 and x.shape[1] == 4:
+            print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
+            x = x[:, [0, 2], :, :]  # Keep only channels 0, 2
+            print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
+            # Update model config to reflect 2 channels
+            cfg.model.in_channels = 2
+        elif x.ndim == 3 and x.shape[1] == 4:
+            print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
+            x = x[:, [0, 2], :]  # Keep only channels 0, 2
+            print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
+            # Update model config to reflect 2 channels
+            cfg.model.in_channels = 2
         
         # Limit samples if specified
         if cfg.dataset.limit_samples > 0:

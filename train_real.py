@@ -111,13 +111,13 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, print_every
     use_cuda = device.type == 'cuda'
     scaler = getattr(train_one_epoch, "_scaler", None)
     if scaler is None:
-        scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
+        scaler = torch.amp.GradScaler('cuda', enabled=use_cuda)
         setattr(train_one_epoch, "_scaler", scaler)
     for i, (xb, yb) in enumerate(dataloader):
         xb = xb.to(device)
         yb = yb.to(device)
         optimizer.zero_grad(set_to_none=True)
-        with torch.cuda.amp.autocast(enabled=use_cuda):
+        with torch.amp.autocast('cuda', enabled=use_cuda):
             pred = model(xb)
             loss = criterion(pred, yb)
         scaler.scale(loss).backward()
@@ -139,7 +139,7 @@ def evaluate(model, dataloader, criterion, device):
     for xb, yb in dataloader:
         xb = xb.to(device)
         yb = yb.to(device)
-        with torch.cuda.amp.autocast(enabled=use_cuda):
+        with torch.amp.autocast('cuda', enabled=use_cuda):
             pred = model(xb)
             loss = criterion(pred, yb)
         total += loss.item() * xb.size(0)
@@ -298,6 +298,20 @@ def main(cfg):
     print("[STEP] Loading dataset files...")
     x, t = load_npz_pair(cfg.dataset.x_train, cfg.dataset.t_train, cfg.dataset.x_key, cfg.dataset.t_key)
     print(f"[OK] Loaded. x.shape={x.shape}, t.shape={t.shape} (elapsed {time.time()-t0:.2f}s)")
+    
+    # Exclude Channel 1 and Channel 3 (keep only channels 0, 2)
+    if x.ndim == 4 and x.shape[1] == 4:
+        print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
+        x = x[:, [0, 2], :, :]  # Keep only channels 0, 2
+        print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
+        # Update model config to reflect 2 channels
+        cfg.model.in_channels = 2
+    elif x.ndim == 3 and x.shape[1] == 4:
+        print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
+        x = x[:, [0, 2], :]  # Keep only channels 0, 2
+        print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
+        # Update model config to reflect 2 channels
+        cfg.model.in_channels = 2
     
     # Check for NaNs
     if np.isnan(x).any():

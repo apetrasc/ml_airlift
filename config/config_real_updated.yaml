@@ -2,8 +2,8 @@
 
 # Data configuration
 dataset:
-  x_train: /home/smatsubara/documents/airlift/data/cleaned/x_train_real_cleaned.npy
-  t_train: /home/smatsubara/documents/airlift/data/cleaned/t_train_real_cleaned.npy
+  x_train: /mnt/matsubara/signals_exp/dataset/dropped_data/x_train_dropped.npy
+  t_train: /mnt/matsubara/signals_exp/dataset/dropped_data/t_train_dropped.npy
   x_key: x_train_real
   t_key: t_train_real
   limit_samples: 0  # 0 means use all samples
@@ -22,7 +22,7 @@ model:
 # Training hyperparameters
 training:
   device: cuda:0
-  epochs: 500
+  epochs: 100
   batch_size: 8
   learning_rate: 0.0001
   workers: 0
@@ -60,4 +60,7 @@ evaluation:
     - "Gas Volume Fraction"
     - "Liquid Volume Fraction"
 
-
+optuna:
+  dir: /mnt/matsubara/outputs_real/optuna
+  outputs_dir: /mnt/matsubara/outputs_real
+  base_config_path: config/config_real_updated.yaml
