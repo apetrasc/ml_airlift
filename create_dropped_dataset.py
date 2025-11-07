@@ -89,7 +89,7 @@ def main():
         sys.exit(1)
     
     # Create output directory
-    output_dir = "/mnt/matsubara/signals_exp/dataset/dropped_data"
+    output_dir = cfg.output.model_save_dir
     os.makedirs(output_dir, exist_ok=True)
     print(f"\n[INFO] Output directory: {output_dir}")
     

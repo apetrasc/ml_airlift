@@ -20,7 +20,6 @@ import matplotlib.pyplot as plt
 
 import optuna
 from optuna.trial import Trial
-import Trial
 from omegaconf import OmegaConf, DictConfig
 import torch
 import torch.nn as nn

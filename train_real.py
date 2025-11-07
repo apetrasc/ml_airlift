@@ -162,7 +162,11 @@ def create_model(cfg, x_sample: torch.Tensor, out_dim: int, device: torch.device
         print(f"[OK] Using Conv1d model (C={in_channels}, L={length})")
     elif x_sample.ndim == 4:
         # 2D CNN for image data
-        if x_sample.shape[1] not in (1, 3, 4):
+        valid_channel_counts = {1, 2, 3, 4, cfg.model.get('in_channels', 0)}
+        # Remove zeros to avoid false positives when in_channels not set
+        valid_channel_counts.discard(0)
+
+        if x_sample.shape[1] not in valid_channel_counts:
             x_nchw = x_sample.permute(0, 3, 1, 2).contiguous()
             print("[INFO] Transposed NHWC -> NCHW")
         else:
