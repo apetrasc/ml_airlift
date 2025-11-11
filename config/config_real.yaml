@@ -9,8 +9,8 @@ hyperparameters:
 
 # Real data dataset paths
 dataset:
-  x_train: /home/smatsubara/documents/airlift/data/sandbox/results/x_train_real.npz
-  t_train: /home/smatsubara/documents/airlift/data/sandbox/results/t_train_real.npz
+  x_train: /home/smatsubara/documents/airlift/data/cleaned/x_train_real_cleaned.npy
+  t_train: /home/smatsubara/documents/airlift/data/cleaned/t_train_real_cleaned.npy
   data_keys:
     x_key: x_train_real
     t_key: t_train_real

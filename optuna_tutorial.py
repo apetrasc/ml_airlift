@@ -328,13 +328,31 @@ def objective(trial: Trial, base_config_path: str) -> float:
         out_dim = dataset.tensors[1].shape[1] if dataset.tensors[1].ndim == 2 else 1
         model = create_model(cfg, x_sample, out_dim, device)
 
-        # Enable synchronous data parallel if multiple GPUs are available
-        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-            # Use CUDA device (single logical device) and replicate model across GPUs
-            model = nn.DataParallel(model)
-            device = torch.device("cuda")
-            cfg.training.device = "cuda"
-            print(f"[INFO] DataParallel enabled across {torch.cuda.device_count()} GPUs")
+        # Enable DataParallel with safe settings for large images
+        # Adjust batch size for DataParallel: each GPU gets batch_size / num_gpus
+        num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        if num_gpus > 1:
+            # Clear GPU memory before wrapping model
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            
+            # Adjust batch size: ensure each GPU gets at least 1 sample
+            effective_batch_per_gpu = cfg.training.batch_size // num_gpus
+            if effective_batch_per_gpu < 1:
+                print(f"[WARN] Batch size {cfg.training.batch_size} too small for {num_gpus} GPUs")
+                print(f"[WARN] Each GPU would get {effective_batch_per_gpu} samples, minimum is 1")
+                print(f"[WARN] Consider increasing batch_size or using fewer GPUs")
+            
+            # Wrap model with DataParallel
+            # Use device_ids to explicitly specify which GPUs to use
+            model = nn.DataParallel(model, device_ids=list(range(num_gpus)))
+            device = torch.device("cuda:0")  # Use first GPU as primary
+            cfg.training.device = "cuda:0"
+            print(f"[INFO] DataParallel enabled across {num_gpus} GPUs")
+            print(f"[INFO] Effective batch size per GPU: {effective_batch_per_gpu}")
+            print(f"[INFO] Total batch size: {cfg.training.batch_size}")
+        else:
+            print(f"[INFO] Using single GPU: {device}")
         torch.backends.cudnn.benchmark = True
         
         # Create optimizer and loss

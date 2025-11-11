@@ -51,6 +51,18 @@ def load_npz_pair(x_path: str, t_path: str, x_key: str = "x_train_real", t_key: 
     return x, t
 
 
+def get_valid_device(device_str: str) -> torch.device:
+    """Get valid torch device from string, with fallback to CPU if CUDA unavailable."""
+    if device_str.startswith('cuda'):
+        if torch.cuda.is_available():
+            return torch.device(device_str)
+        else:
+            print(f"[WARN] CUDA requested but not available. Falling back to CPU.")
+            return torch.device('cpu')
+    else:
+        return torch.device(device_str)
+
+
 def to_tensor_dataset(x: np.ndarray, t: np.ndarray, device: str = "cuda:0"):
     """Convert numpy arrays to torch tensors and TensorDataset."""
     if x.ndim == 2:
@@ -113,19 +125,65 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, print_every
     if scaler is None:
         scaler = torch.amp.GradScaler('cuda', enabled=use_cuda)
         setattr(train_one_epoch, "_scaler", scaler)
+    
+    # Clear GPU memory before training
+    if use_cuda:
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    
     for i, (xb, yb) in enumerate(dataloader):
-        xb = xb.to(device)
-        yb = yb.to(device)
-        optimizer.zero_grad(set_to_none=True)
-        with torch.amp.autocast('cuda', enabled=use_cuda):
-            pred = model(xb)
-            loss = criterion(pred, yb)
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-        total += loss.item() * xb.size(0)
-        if (i + 1) % print_every == 0:
-            print(f"  [train] step {i+1}/{len(dataloader)} loss={loss.item():.6f}")
+        try:
+            # Ensure tensors are contiguous and on correct device
+            if not xb.is_contiguous():
+                xb = xb.contiguous()
+            if not yb.is_contiguous():
+                yb = yb.contiguous()
+            
+            xb = xb.to(device, non_blocking=False)  # Use blocking for stability
+            yb = yb.to(device, non_blocking=False)
+            
+            optimizer.zero_grad(set_to_none=True)
+            with torch.amp.autocast('cuda', enabled=use_cuda):
+                pred = model(xb)
+                # Verify shapes match
+                if pred.shape[0] != yb.shape[0]:
+                    raise RuntimeError(f"Batch size mismatch: pred={pred.shape[0]}, yb={yb.shape[0]}")
+                loss = criterion(pred, yb)
+            
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            
+            loss_value = loss.item()
+            total += loss_value * xb.size(0)
+            
+            # Clear intermediate tensors and free memory
+            del pred, loss
+            if use_cuda:
+                # Synchronize all GPUs if using DataParallel
+                if isinstance(model, nn.DataParallel):
+                    # Synchronize all devices used by DataParallel
+                    for i in range(torch.cuda.device_count()):
+                        torch.cuda.synchronize(i)
+                else:
+                    torch.cuda.synchronize()  # Single GPU
+                
+                # Periodically clear cache to prevent fragmentation
+                if (i + 1) % 10 == 0:
+                    torch.cuda.empty_cache()
+            
+            if (i + 1) % print_every == 0:
+                print(f"  [train] step {i+1}/{len(dataloader)} loss={loss_value:.6f}")
+        except RuntimeError as e:
+            if 'CUDA' in str(e) or 'illegal memory access' in str(e).lower():
+                print(f"[ERROR] CUDA error at batch {i}: {e}")
+                if use_cuda:
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                raise
+            else:
+                raise
+    
     return total / len(dataloader.dataset)
 
 
@@ -292,6 +350,17 @@ def main(cfg):
     # Set reproducibility
     torch.manual_seed(cfg.training.seed)
     np.random.seed(cfg.training.seed)
+
+    # Clear GPU memory before starting
+    device = get_valid_device(cfg.training.device)
+    if device.type == 'cuda':
+        print("[INFO] Clearing GPU memory...")
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        # Reset peak memory stats
+        for i in range(torch.cuda.device_count()):
+            torch.cuda.reset_peak_memory_stats(i)
+        print(f"[OK] GPU memory cleared")
 
     # cuDNN autotune for convs
     torch.backends.cudnn.benchmark = True

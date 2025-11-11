@@ -17,7 +17,7 @@ model:
   resize_hw: null  # null means no resizing, use full resolution
   dropout_rate: 0.2  # Dropout rate for regularization (0.0-0.5 recommended)
   use_residual: true  # Use improved residual architecture (true) or original simple architecture (false)
-  hidden: 64  # Base number of hidden channels (will be expanded to 64 -> 128 -> 256)
+  hidden: 32  # Base number of hidden channels (will be expanded to 64 -> 128 -> 256)
 
 # Training hyperparameters
 training:

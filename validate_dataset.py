@@ -630,7 +630,7 @@ def validate_dataset_pair(x_path, t_path):
 def main():
     """Main function."""
     # Load config
-    config_path = "config/config_real_updated.yaml"
+    config_path = "/home/smatsubara/documents/sandbox/ml_airlift/config/config_real.yaml"
     if not os.path.exists(config_path):
         print(f"[ERROR] Config file not found: {config_path}")
         sys.exit(1)
