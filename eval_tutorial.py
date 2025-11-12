@@ -1,5 +1,5 @@
 import polars as pl
-from src import preprocess_and_predict
+from src.utils import preprocess_and_predict, preprocess
 from models import SimpleCNN, SimpleViTRegressor, ResidualCNN
 import torch
 import numpy as np
@@ -21,6 +21,7 @@ model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluati
 #model = SimpleViTRegressor(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 # You can use the argparse library to accept a command-line argument for base_dir (datetime).
 
+device = config["training"]["device"]
 
 parser = argparse.ArgumentParser(description="Run evaluation with specified base directory (datetime).")
 parser.add_argument('--datetime', type=str, required=True, help='Base directory for evaluation (e.g., /home/smatsubara/documents/airlift/data/outputs/2025-09-07/14-39-46)')
@@ -91,13 +92,17 @@ def preprocess_for_gradcam(file_path, sample_index=500, channel_index=0):
         raise RuntimeError(f"Invalid sample_index {sample_index}, N={N}")
     if not (0 <= channel_index < C):
         raise RuntimeError(f"Invalid channel_index {channel_index}, C={C}")
-    signal = x[sample_index, :, channel_index]
-    mean = np.mean(signal)
-    std = np.std(signal)
-    std = std if std > 1e-8 else 1e-8
-    signal = (signal - mean) / std
-    signal = torch.tensor(signal, dtype=torch.float32)
-    signal = signal.unsqueeze(0).unsqueeze(0)  # [1, 1, L]
+    x = x[:,:,channel_index]
+    signal = preprocess(x_raw=x, device=device)
+    signal = signal[sample_index,0,:]
+    signal = signal.unsqueeze(0)
+    # signal = x[sample_index, :, channel_index]
+    # mean = np.mean(signal)
+    # std = np.std(signal)
+    # std = std if std > 1e-8 else 1e-8
+    # signal = (signal - mean) / std
+    # signal = torch.tensor(signal, dtype=torch.float32)
+    # signal = signal.unsqueeze(0).unsqueeze(0)  # [1, 1, L]
     return signal
 
 # ----------- Grad-CAM 実行スクリプト -----------
