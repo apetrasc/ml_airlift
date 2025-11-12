@@ -53,6 +53,34 @@ class ResidualCNN(nn.Module):
         return x.squeeze(1)  # (batch,)
 
 class SimpleCNN(nn.Module):
+    def __init__(self, input_length, input_channels=1, hidden_channels=[64, 128, 256], kernel_sizes=[3, 3, 3], dropout_rate=0.2):
+        super(SimpleCNN, self).__init__()
+        self.conv1 = nn.Conv1d(input_channels, 16, kernel_size=201, padding=100)
+        self.bn1 = nn.BatchNorm1d(16)
+        self.relu1 = nn.ReLU()
+        self.conv2 = nn.Conv1d(16, 4, kernel_size=201, padding=101)
+        self.bn2 = nn.BatchNorm1d(4)
+        self.relu2 = nn.ReLU()
+        self.pool = nn.AdaptiveAvgPool1d(1)
+        self.fc = nn.Linear(4, 1) 
+        self.dropout = nn.Dropout(0.1)
+        self.ln1 = nn.LayerNorm([16, input_length])
+        self.ln2 = nn.LayerNorm([4, input_length+2])
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.ln1(x)
+        x = self.relu1(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu2(x)
+        x = self.ln2(x)
+        x = self.pool(x)
+        #x = self.dropout(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        return x.squeeze(1)
+class SimpleCNN(nn.Module):
     def __init__(self, input_length):
         super(SimpleCNN, self).__init__()
         self.conv1 = nn.Conv1d(1, 16, kernel_size=201, padding=100)
@@ -80,7 +108,7 @@ class SimpleCNN(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.fc(x)
         return x.squeeze(1)
-    
+        
 class BaseCNN(nn.Module):
     def __init__(self, input_length):
         super(BaseCNN, self).__init__()
@@ -246,3 +274,60 @@ class AlexNet1D(nn.Module):
         x = self.gap(x).view(x.size(0), -1)
         x = self.head(x)
         return x.squeeze(1)
+
+
+class PFNet(nn.Module):
+    """
+    PFNet: Physics-Informed Neural Network for regression tasks.
+    Combines CNN feature extraction with physics-informed constraints.
+    """
+    
+    def __init__(self, input_channels=4, output_dim=6, hidden_dim=128):
+        super(PFNet, self).__init__()
+        
+        # Feature extraction layers
+        self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        
+        # Group normalization (works with batch size 1)
+        self.gn1 = nn.GroupNorm(8, 32)  # 8 groups for 32 channels
+        self.gn2 = nn.GroupNorm(8, 64)  # 8 groups for 64 channels
+        self.gn3 = nn.GroupNorm(8, 128)  # 8 groups for 128 channels
+        
+        # Pooling
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        
+        # Fully connected layers
+        self.fc1 = nn.Linear(128, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
+        self.fc3 = nn.Linear(hidden_dim // 2, output_dim)
+        
+        # Dropout
+        self.dropout = nn.Dropout(0.2)
+        
+        # Activation
+        self.relu = nn.ReLU()
+        
+    def forward(self, x):
+        # Feature extraction
+        x = self.relu(self.gn1(self.conv1(x)))
+        x = self.pool(x)
+        
+        x = self.relu(self.gn2(self.conv2(x)))
+        x = self.pool(x)
+        
+        x = self.relu(self.gn3(self.conv3(x)))
+        x = self.pool(x)
+        
+        # Flatten
+        x = x.view(x.size(0), -1)
+        
+        # Fully connected layers
+        x = self.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.relu(self.fc2(x))
+        x = self.dropout(x)
+        x = self.fc3(x)
+        
+        return x

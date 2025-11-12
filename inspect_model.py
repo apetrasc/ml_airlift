@@ -554,14 +554,14 @@ def create_signal_gradcam_overlay(
     print(f"Overlay image saved to: {save_path}")
 
 # Create signal-GradCAM overlay for multiple samples
-for sample_idx in [100, 1000, 5000, 8000]:
+for sample_idx in range(10000):
     create_signal_gradcam_overlay(
         file_path='/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20241007-1401_processed.npz',
         model_path='/home/smatsubara/documents/airlift/data/results/layernorm/weights/model.pth',
         model_class=lambda input_length=2500: SimpleCNN(input_length=input_length),
         sample_index=sample_idx,
         channel_index=0,
-        save_path=f'/home/smatsubara/documents/airlift/data/results/signal_gradcam_overlay_sample_{sample_idx}.png',
+        save_path=f'/home/smatsubara/documents/airlift/data/results/gradcam_outputs/signal_gradcam_overlay_sample_{sample_idx}.png',
         device='cpu',
         input_length=2500
     )

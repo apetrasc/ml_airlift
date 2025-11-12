@@ -132,32 +132,37 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
     from scipy import signal
     x_tmp = x_test.copy()
     x_tmp_for_fft = x_test.copy()
-    x_test=filter_signal(filter_freq, x_tmp, fs)
+    x_test_filterd=filter_signal(filter_freq, x_tmp, fs)
+    x_test = x_test_filterd.copy()
+    raw_tmp = x_test.copy()
     if if_hilbert:
         print(f'hilbert started')
         x_raw_torch = torch.from_numpy(x_test).float()
         x_raw_torch = x_raw_torch.to(device)
         x_test = hilbert_cuda(x_raw_torch,device)
-    x_tmp2 = x_test.copy()
-    x_test = rolling_window_signal(rolling_window, window_size, window_stride, np, pl, x_tmp2)
     #print(f"max: {np.max(x_test[10])}")
+    x_tmp2 = x_test.copy()
+    x_test = rolling_window_signal(rolling_window, window_size, x_tmp2)
     print(f'xtest shap: {x_test.shape}')
     if np.isnan(x_test).any():
         print("nan")
         x_test = np.nan_to_num(x_test)
     print(f'x_test shape: {x_test.shape}')
-    pulse_num = x_test.shape[0]
     argmax_pipe_ref2 = np.argmax(x_test[1000,:])
-    x_test = x_test[:,argmax_pipe_ref2-200:argmax_pipe_ref2+2300]
+    x_test = x_test[:,argmax_pipe_ref2-170:argmax_pipe_ref2+2330]
+    raw_tmp = raw_tmp[:,argmax_pipe_ref2-170:argmax_pipe_ref2+2330]
+    # x_test = x_test[:,208:2708]
+    # raw_tmp = raw_tmp[:,208:2708]
     print(f'argmax {argmax_pipe_ref2}')
+    pulse_num = x_test.shape[0]
     x_test_tensor = torch.from_numpy(x_test).float()
 
     # Add channel dimension: (batch, 1, length, channel)
     x_test_tensor_all = x_test_tensor.unsqueeze(1)
     print(f'x_test_tensor_all shape: {x_test_tensor_all.shape}')
     # Normalize each (length, channel) column for each sample in the batch
-    c=0.4
-    max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]+c
+    c=1
+    max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]*c
     #print(f"max_values_per_column.shape: {max_values_per_column.shape}")
     max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
     x_test_tensor_all = x_test_tensor_all / (max_values_per_column)
@@ -223,8 +228,9 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
             plt.plot(t*1e6,x_test_sigmoid_plot,
                      color='red',label='Sigmoid')
         plt.xlabel("Time (µs)")
+        plt.xlim(0, 50)
+        plt.ylim(0, 1)
         plt.ylabel("Amplitude")
-        plt.grid(True)
         plt.tight_layout()
         plt.legend()
         if png_save_dir!=None:
@@ -233,22 +239,40 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
         #plt.show()
         plt.close()
         plt.figure(figsize=(10, 4))
-        freq = np.arange(n_samples//2)*fs/n_samples
-        x_test_for_fft = torch.from_numpy(x_tmp_for_fft[plot_idx,:]).cpu()
-        x_test_fft = torch.abs(torch.fft.fft(x_test_for_fft))
-        x_test_fft = torch.pow(x_test_fft, 2)
         plt.rcParams["font.size"] = 18
-        plt.plot(freq*1e-6,x_test_fft.cpu().numpy()[:n_samples//2],
-                 color='blue',label='FFT')
-        plt.xlabel("Frequency (MHz)")
-        plt.ylabel("Amplitude")
-        plt.ylim(-0.1*np.max(x_test_fft.cpu().numpy()[40:n_samples//2]), 1.1*np.max(x_test_fft.cpu().numpy()[40:n_samples//2]))
-        plt.grid(True)
+        plt.plot(t*1e6,raw_tmp[plot_idx,:],
+                 color='blue',label='Raw Signal')
+        plt.xlabel("Time (µs)")
+        plt.xlim(0, 10)
+        plt.ylim(-1.5, 1.5)
+        plt.ylabel("Amplitude (V)")
         plt.tight_layout()
         plt.legend()
         if png_save_dir!=None:
             base_filename = os.path.splitext(os.path.basename(path))[0]
-            plt.savefig(os.path.join(png_save_dir,f'{base_filename}_{png_name}_fft.png'))
+            plt.savefig(os.path.join(png_save_dir,f'{base_filename}_{png_name}_pulse.png'))
+        #plt.show()
+        plt.close()
+        plt.figure(figsize=(10, 4))
+        freq = np.arange(0,fs,1/32e-6)
+        x_test_for_fft = torch.from_numpy(x_tmp_for_fft[plot_idx,630:2320]).float()
+        x_test_fft = torch.abs(torch.fft.fft(x_test_for_fft))
+        x_test_fft /= n_samples
+        x_test_fft_np = x_test_fft.cpu().numpy()
+        x_test_fft_np /= np.max(x_test_fft_np[40:])
+        plt.rcParams["font.size"] = 18
+        plt.plot(freq*1e-6,x_test_fft_np[:len(freq)],
+                 color='blue',label='FFT')
+        plt.xlabel("Frequency (MHz)")
+        plt.ylabel("Amplitude")
+        plt.xlim(-0.2, np.max(freq)*1e-6/2)
+        plt.ylim(0, 1)
+        plt.tight_layout()
+        plt.legend()
+        if png_save_dir!=None:
+            base_filename = os.path.splitext(os.path.basename(path))[0]
+            print("saving..")
+            plt.savefig(os.path.join(png_save_dir,f'{base_filename}_zoom_fft.png'))
     return x_test_tensor_cnn
 
 def func_sigmoid(x, a, b, c, cx ,k):
@@ -273,6 +297,7 @@ def sigmoid_fitting(x_test_all, fs):
     end_idx=0
     start_idx = 6e-6*fs
     count=0
+    x_test_all = x_test_all[:,0,:]
     for x_test in x_test_all[:,0,:]:
         argmax_signal = np.argmax(x_test)
         argrelmin_array = signal.argrelmin(x_test[argmax_signal:])
@@ -291,48 +316,63 @@ def sigmoid_fitting(x_test_all, fs):
             print(f'{count}回目終了')
     return np.array(x_test_sigmoid)
 
-def rolling_window_signal(rolling_window, window_size, window_stride, np, pl, x_test):
+def  rolling_window_signal(rolling_window, window_size=20, x_test=None):
+    import polars as pl
     if rolling_window:
-        x_test_tmp = []
-        for x_pulse in x_test:
-            s =pl.Series(x_pulse)
+        s =pl.from_numpy(np.transpose(x_test))
 
-            rolling_max = s.rolling_max(window_size=window_size)[
-                 window_size-1:].gather_every(
-                 n=window_stride, offset=0
-            )
-            x_pulse = rolling_max.to_numpy()
-            x_test_tmp.append(x_pulse)
-        x_test = np.array(x_test_tmp)
+        # s = s.select(pl.all().rolling_mean(
+        #     window_size=window_size,
+        #     min_periods=1
+        # ))
+        s = s.select(pl.all().rolling_min(
+            window_size=window_size,
+            min_periods=1
+        ))
+        # s = s.select(pl.all().rolling_mean(
+        #     window_size=window_size//2,
+        #     min_periods=1
+        # ))
+        x_test = s.to_numpy().transpose()
         print('ここまでOK')
     return x_test
 
 def filter_signal(filter_freq, x_raw, fs, device='cuda:0'):
+    from scipy import signal
     min_freq = filter_freq[0]
     max_freq = filter_freq[1]
     x_size = x_raw.shape[1]
-    #print(f'x_raw shape: {x_raw.shape}')
-    x_tensor = torch.from_numpy(x_raw).float()
-    x_tensor = x_tensor.to(device)
-    Xf = torch.fft.fft(x_tensor,dim=1)
-    #print(f'Xf shape: {Xf.shape}')
-    min_freq_idx = int(x_size*min_freq/fs)
-    #print(f'min freq index: {min_freq_idx}')
-    #print(f'Xf shape: {Xf.shape}')
-    max_freq_idx = np.min([x_size*max_freq/fs, x_size//2-1])
-    max_freq_idx = int(max_freq_idx)
-    if min_freq_idx!=0 or max_freq_idx<x_size//2:
-        #print(f'max freq index: {max_freq_idx}')
-        Xf = torch.fft.fft(x_tensor,dim=1)
-        Xf[:,0:min_freq_idx]=0
-        Xf[:,max_freq_idx:x_size//2]=0
-        #print(f'Xf shape: {Xf.shape}')
-        x_tensor_new = torch.fft.ifft(Xf,dim=1)
-        #print(f'x_tensor_new shape: {x_tensor_new.shape}')
-        x_tensor_new = torch.real(x_tensor_new)
-        return x_tensor_new.cpu().numpy()
+    if filter_freq[0] > 0:
+
+        sos = signal.butter(16, filter_freq, btype='bandpass', output='sos', fs=fs)
+
+        x_filtered = signal.sosfiltfilt(sos, x_raw, axis=1)
+
+        return x_filtered
     else:
         return x_raw
+    # #print(f'x_raw shape: {x_raw.shape}')
+    # x_tensor = torch.from_numpy(x_raw).float()
+    # x_tensor = x_tensor.to(device)
+    # Xf = torch.fft.fft(x_tensor,dim=1)
+    # #print(f'Xf shape: {Xf.shape}')
+    # min_freq_idx = int(x_size*min_freq/fs)
+    # #print(f'min freq index: {min_freq_idx}')
+    # #print(f'Xf shape: {Xf.shape}')
+    # max_freq_idx = np.min([x_size*max_freq/fs, x_size//2-1])
+    # max_freq_idx = int(max_freq_idx)
+    # if min_freq_idx!=0 or max_freq_idx<x_size//2:
+    #     #print(f'max freq index: {max_freq_idx}')
+    #     Xf = torch.fft.fft(x_tensor,dim=1)
+    #     Xf[:,0:min_freq_idx]=0
+    #     Xf[:,max_freq_idx:x_size//2]=0
+    #     #print(f'Xf shape: {Xf.shape}')
+    #     x_tensor_new = torch.fft.ifft(Xf,dim=1)
+    #     #print(f'x_tensor_new shape: {x_tensor_new.shape}')
+    #     x_tensor_new = torch.real(x_tensor_new)
+    #     return x_tensor_new.cpu().numpy()
+    # else:
+    #     # return x_raw
 
 def preprocess_liquidonly(path, plot_index=80, device='cuda:0',
                            filter_freq=[0, 1.0e9],

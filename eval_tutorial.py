@@ -39,36 +39,36 @@ model.load_state_dict(
 )
 
 
-x_train_path = os.path.join(dataset_dir,'x_train.npy')
-t_train_path = os.path.join(dataset_dir,'t_train.npy')
+# x_train_path = os.path.join(dataset_dir,'x_train.npy')
+# t_train_path = os.path.join(dataset_dir,'t_train.npy')
 
-file_path = os.path.join(dataset_dir,'x_train.npy')
-x_train = np.load(x_train_path)
-t_train = np.load(t_train_path)
-print(f'shape of x_train: {x_train.shape}')
-exp_date =""
-sample_index=77
-fs = 50e6
+# file_path = os.path.join(dataset_dir,'x_train.npy')
+# x_train = np.load(x_train_path)
+# t_train = np.load(t_train_path)
+# print(f'shape of x_train: {x_train.shape}')
+# exp_date =""
+# sample_index=73
+# fs = 50e6
 # eval_result = []
 # x_test_tensor_cnn = torch.from_numpy(x_train).float()
 # x_test_tensor_cnn = x_test_tensor_cnn.unsqueeze(1)
 
 
-# expdata_dir = "/mnt/sdb/yyamaguchi/psdata2matlab/experiments/processed/solid_liquid"
-# exp_date = "P20241011-1132"
-# file_path = os.path.join(expdata_dir, exp_date+"_processed.npz")
-# x_npz = np.load(file_path)
-# x_test = x_npz["processed_data"][:,:,0]
-# fs = x_npz["fs"]
-# sample_index = 1000
-# # x_train_cnn = preprocess(file_path, device="cuda:0",
-# #                          fs=fs,x_test=x_test)
-# x_train_cnn = preprocess(path=file_path,if_log1p=True,if_hilbert=True,
-#                          x_test=x_test, device="cuda:0",fs=fs,
-#                          if_drawsignal=True,png_save_dir=png_save_dir,
-#                          png_name="new",plot_idx=sample_index)
-# x_train_cnn = x_train_cnn.squeeze(1)
-# x_train = x_train_cnn.cpu().numpy()
+expdata_dir = "/mnt/sdb/yyamaguchi/psdata2matlab/experiments/processed/solid_liquid"
+exp_date = "P20241011-1132"
+file_path = os.path.join(expdata_dir, exp_date+"_processed.npz")
+x_npz = np.load(file_path)
+x_test = x_npz["processed_data"][:,:,0]
+fs = x_npz["fs"]
+sample_index = 1000
+# x_train_cnn = preprocess(file_path, device="cuda:0",
+#                          fs=fs,x_test=x_test)
+x_train_cnn = preprocess(path=file_path,if_log1p=True,if_hilbert=True,
+                         x_test=x_test, device="cuda:0",fs=fs,
+                         if_drawsignal=True,png_save_dir=png_save_dir,
+                         png_name="new",plot_idx=sample_index)
+x_train_cnn = x_train_cnn.squeeze(1)
+x_train = x_train_cnn.cpu().numpy()
 
 
 
@@ -192,14 +192,15 @@ if not os.path.exists(gradcam_output_dir):
 plt.figure(figsize=(10, 4))
 plt.rcParams['font.size'] = 16
 n_samples = x_train[sample_index,:].shape[0]
-t = np.arange(n_samples)/fs
-plt.plot(t*1e6, x_train[sample_index,:],
+t = np.arange(n_samples)
+plt.plot(t, x_train[sample_index,:],
          color='blue',label='Processed Signal')
-plt.plot(t*1e6,grad_cam_map, color='red', label='Grad-CAM')
-plt.fill_between(t*1e6, grad_cam_map,
+plt.plot(t,grad_cam_map, color='red', label='Saliency-Map')
+plt.legend()
+plt.fill_between(t, grad_cam_map,
          color='red',alpha=0.1)
-plt.title('Grad-CAM Map for Sample Input (Conv1d)')
-plt.xlabel('Time (µs)')
+plt.title('Saliency-Map for Sample Input (Conv1d)')
+plt.xlabel('Time Axis')
 plt.ylabel('Amplitude')
 plt.grid(True)
 plt.tight_layout()

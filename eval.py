@@ -39,7 +39,7 @@ parser.add_argument('--log1p', type=int, required=False, default=1,
                     help='If applying log1p')
 parser.add_argument('--rolling', type=int, required=False, default=0,
                     help='If applying maximum rolling windows')
-parser.add_argument('--rollingparam', nargs=2, type=int, required=False,
+parser.add_argument('--rollingparam', type=int, required=False,
                     help='Window Size, Stride')
 parser.add_argument('--hilbert', type=int, required=False,default=1,
                     help='If applying hilbert envelope')
@@ -66,15 +66,11 @@ if_hilbert = args.hilbert
 if_reduce = args.reduce
 if_drawsignal = args.drawsignal
 png_name = args.pngname
-window_size = 0
-window_stride = 0
+window_size = 20
+window_stride = 1
 
 if if_rolling:
-    if args.rollingparam:
-        window_size = args.rollingparam[0]
-        window_stride = args.rollingparam[1]
-    else:
-        sys.exit('You need rollingparam in the argument.')
+    window_size = args.rollingparam
 
 base_dir = args.datetime
 model_path = os.path.join(base_dir + '/weights/model.pth')
@@ -265,14 +261,7 @@ def calculate_mae(y_true, y_pred):
 def RelativeError(y_true, y_pred):
     return np.mean(np.abs(y_true - y_pred) / (y_true + 1e-7))
 
-rmse = calculate_rmse(x_valid, y_valid)
-mae = calculate_mae(x_valid, y_valid)
-relative_error = RelativeError(x_valid, y_valid)
-relative_error_stone = RelativeError(x_valid_stone, y_valid_stone_plot)
-print(f"RMSE between ground truth and prediction: {rmse:.6f}")
-print(f"MAE between ground truth and prediction: {mae:.6f}")
-print(f"Relative Error between ground truth and prediction: {relative_error:.6f}")
-print(f"Relative Error between ground truth and prediction (stone): {relative_error_stone:.6f}")
+
 plt.figure(figsize=(8, 8))
 plt.errorbar(
     x_valid, y_valid, yerr=yerr_valid, fmt='o', color='blue', alpha=0.7, ecolor='red', capsize=3, label='All'
@@ -285,6 +274,7 @@ plt.legend(fontsize=18)
 plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
 plt.xlabel("Ground Truth(Tube Closing)", fontsize=18)
 plt.ylabel("Prediction(machine learning)", fontsize=18)
+plt.rcParams['font.size'] = 16
 plt.xlim(0, 0.2)
 plt.ylim(0, 0.2)
 plt.title("Prediction vs. Ground Truth", fontsize=20)
@@ -339,3 +329,21 @@ plt.tight_layout()
 plt.savefig(os.path.join(base_dir, 'predicted_vs_truth_processed.png'))
 plt.close()
 print("saved all figures")
+
+rmse = calculate_rmse(x_valid, y_valid)
+mae = calculate_mae(x_valid, y_valid)
+relative_error = RelativeError(x_valid, y_valid)
+relative_error_stone = RelativeError(x_valid_stone, y_valid_stone_plot)
+print(f"RMSE between ground truth and prediction: {rmse:.6f}")
+print(f"MAE between ground truth and prediction: {mae:.6f}")
+print(f"Relative Error between ground truth and prediction: {relative_error:.6f}")
+print(f"Relative Error between ground truth and prediction (stone): {relative_error_stone:.6f}")
+
+rmse = calculate_rmse(x_valid, y_valid_calibrated)
+mae = calculate_mae(x_valid, y_valid_calibrated)
+relative_error = RelativeError(x_valid, y_valid_calibrated)
+relative_error_stone = RelativeError(x_valid_stone, y_valid_stone_calibrated)
+print(f"RMSE between ground truth and prediction: {rmse:.6f}")
+print(f"MAE between ground truth and prediction: {mae:.6f}")
+print(f"Relative Error between ground truth and prediction: {relative_error:.6f}")
+print(f"Relative Error between ground truth and prediction (stone): {relative_error_stone:.6f}")

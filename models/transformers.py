@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torchvision.models import vit_b_16
+# from torchvision.models import vit_b_16  # Commented out due to import error
 class SimpleViTRegressor(nn.Module):
     def __init__(self, input_length, patch_size=50, emb_dim=128, num_layers=4, num_heads=4, mlp_dim=256, dropout=0.1):
         """
