@@ -5,6 +5,7 @@ Based on train_real.py structure with automatic parameter tuning.
 """
 
 import os
+import sys
 import time
 import datetime
 import json
@@ -14,29 +15,35 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, random_split
-from models.cnn import SimpleCNNReal, SimpleCNNReal2D
-from src.evaluate_predictions import create_prediction_plots
 import matplotlib.pyplot as plt
 
 import optuna
 from optuna.trial import Trial
 from omegaconf import OmegaConf, DictConfig
-import torch
-import torch.nn as nn
+
+# Add parent directory to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Load config using OmegaConf to enable attribute access
 config = OmegaConf.load('config/config_real_updated.yaml')
 
-# Import functions from train_real.py
-from train_real import (
+# Import functions from new module structure
+from src.data.loaders import (
     load_npz_pair,
     to_tensor_dataset,
     split_dataset,
+)
+from src.training.trainer import (
     train_one_epoch,
     evaluate,
     create_model,
     create_learning_curves,
 )
+try:
+    from src.evaluation.visualizations import create_prediction_plots
+except ImportError:
+    # Fallback to old location
+    from src.evaluate_predictions import create_prediction_plots
 
 # Paths
 OPTUNA_DIR = config.optuna.dir
@@ -67,7 +74,8 @@ def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
     cfg.training.learning_rate = trial.suggest_float(
         'training.learning_rate', 1e-5, 1e-2, log=True
     )
-    cfg.training.batch_size = trial.suggest_categorical('training.batch_size', [4, 8, 16])
+    # Reduce batch size options to avoid OOM with large images
+    cfg.training.batch_size = trial.suggest_categorical('training.batch_size', [2, 4, 8])
     
     # Add weight_decay if not exists
     if 'weight_decay' not in cfg.training:
@@ -219,6 +227,14 @@ def objective(trial: Trial, base_config_path: str) -> float:
     Returns:
         Validation loss (optimization target)
     """
+    # Clear GPU memory before starting trial
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        # Reset memory stats
+        for i in range(torch.cuda.device_count()):
+            torch.cuda.reset_peak_memory_stats(i)
+    
     t0 = time.time()
     
     # 1. Load base configuration
@@ -299,26 +315,28 @@ def objective(trial: Trial, base_config_path: str) -> float:
         
         # Create dataloaders
         print("[STEP] Build dataloaders...")
+        # Set num_workers=0 to avoid multiprocessing issues with large images
+        # pin_memory=False for large images to reduce memory pressure
         train_loader = DataLoader(
             train_set,
             batch_size=cfg.training.batch_size,
             shuffle=True,
-            num_workers=cfg.training.workers,
-            pin_memory=cfg.training.pin_memory
+            num_workers=0,  # Disable multiprocessing to avoid deadlocks
+            pin_memory=False  # Disable pin_memory for large images
         )
         val_loader = DataLoader(
             val_set,
             batch_size=cfg.training.batch_size,
             shuffle=False,
-            num_workers=cfg.training.workers,
-            pin_memory=cfg.training.pin_memory
+            num_workers=0,
+            pin_memory=False
         )
         test_loader = DataLoader(
             test_set,
             batch_size=cfg.training.batch_size,
             shuffle=False,
-            num_workers=cfg.training.workers,
-            pin_memory=cfg.training.pin_memory
+            num_workers=0,
+            pin_memory=False
         )
         
         # 5. Create model
@@ -328,32 +346,19 @@ def objective(trial: Trial, base_config_path: str) -> float:
         out_dim = dataset.tensors[1].shape[1] if dataset.tensors[1].ndim == 2 else 1
         model = create_model(cfg, x_sample, out_dim, device)
 
-        # Enable DataParallel with safe settings for large images
-        # Adjust batch size for DataParallel: each GPU gets batch_size / num_gpus
+        # Disable DataParallel for large images to avoid deadlock/hanging issues
+        # DataParallel can cause deadlocks with very large input images (1400x2500)
+        # Use single GPU instead for stability
         num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
         if num_gpus > 1:
-            # Clear GPU memory before wrapping model
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            
-            # Adjust batch size: ensure each GPU gets at least 1 sample
-            effective_batch_per_gpu = cfg.training.batch_size // num_gpus
-            if effective_batch_per_gpu < 1:
-                print(f"[WARN] Batch size {cfg.training.batch_size} too small for {num_gpus} GPUs")
-                print(f"[WARN] Each GPU would get {effective_batch_per_gpu} samples, minimum is 1")
-                print(f"[WARN] Consider increasing batch_size or using fewer GPUs")
-            
-            # Wrap model with DataParallel
-            # Use device_ids to explicitly specify which GPUs to use
-            model = nn.DataParallel(model, device_ids=list(range(num_gpus)))
-            device = torch.device("cuda:0")  # Use first GPU as primary
-            cfg.training.device = "cuda:0"
-            print(f"[INFO] DataParallel enabled across {num_gpus} GPUs")
-            print(f"[INFO] Effective batch size per GPU: {effective_batch_per_gpu}")
-            print(f"[INFO] Total batch size: {cfg.training.batch_size}")
+            print(f"[WARN] Multiple GPUs available ({num_gpus}), but DataParallel disabled for large images")
+            print(f"[WARN] Using single GPU: {device} to avoid potential deadlocks")
+            print(f"[INFO] If you need multi-GPU, consider using DistributedDataParallel instead")
         else:
             print(f"[INFO] Using single GPU: {device}")
-        torch.backends.cudnn.benchmark = True
+        
+        # Disable cudnn benchmark for large images to avoid memory issues
+        torch.backends.cudnn.benchmark = False
         
         # Create optimizer and loss
         criterion = nn.MSELoss()
@@ -444,14 +449,34 @@ def objective(trial: Trial, base_config_path: str) -> float:
         print(f"Validation Loss: {best_val_loss:.6f}")
         print(f"Test MSE: {test_mse:.6f}, Test MAE: {test_mae:.6f}\n")
         
+        # Clear GPU memory after trial
+        if torch.cuda.is_available():
+            del model, optimizer, criterion
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            # Force garbage collection
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+        
         return best_val_loss
         
     except optuna.TrialPruned:
         # Clean up if pruned
         print(f"[INFO] Cleaning up pruned trial {trial.number}")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
         raise
     except Exception as e:
         print(f"[ERROR] Trial {trial.number} failed: {e}")
+        # Clear GPU memory on error
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
         raise
 
 
@@ -533,7 +558,8 @@ def main():
     )
     
     # Create or load study
-    study_name = 'cnn_hyperparameter_optimization'
+    # Use new study name to avoid compatibility issues with changed hyperparameter spaces
+    study_name = 'cnn_hyperparameter_optimization_v2'  # Changed to v2 for new batch_size range
     try:
         study = optuna.create_study(
             study_name=study_name,
@@ -562,6 +588,15 @@ def main():
     
     print(f"[INFO] Study database: {study_db_path}")
     print(f"[INFO] Number of existing trials: {len(study.trials)}\n")
+    
+    # Clear GPU memory before starting optimization
+    if torch.cuda.is_available():
+        print("[INFO] Clearing GPU memory before optimization...")
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        for i in range(torch.cuda.device_count()):
+            torch.cuda.reset_peak_memory_stats(i)
+        print("[OK] GPU memory cleared")
     
     # Optimize
     print(f"[INFO] Starting optimization...")
