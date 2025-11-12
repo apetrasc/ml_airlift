@@ -25,7 +25,7 @@ from omegaconf import OmegaConf, DictConfig
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Load config using OmegaConf to enable attribute access
-config = OmegaConf.load('config/config_real_updated.yaml')
+config = OmegaConf.load('config/config_real.yaml')
 
 # Import functions from new module structure
 from src.data.loaders import (
@@ -46,9 +46,9 @@ except ImportError:
     from src.evaluate_predictions import create_prediction_plots
 
 # Paths
-OPTUNA_DIR = config.optuna.dir
-OUTPUTS_ROOT = config.optuna.outputs_dir
-BASE_CONFIG_PATH = config.optuna.base_config_path
+OPTUNA_DIR = os.path.join(config.output.model_save_dir, 'optuna')
+OUTPUTS_ROOT = os.path.join(config.output.model_save_dir, 'optuna', 'runs')
+BASE_CONFIG_PATH = 'config/config_real.yaml'
 
 
 def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
