@@ -51,6 +51,18 @@ def load_npz_pair(x_path: str, t_path: str, x_key: str = "x_train_real", t_key: 
     return x, t
 
 
+def get_valid_device(device_str: str) -> torch.device:
+    """Get valid torch device from string, with fallback to CPU if CUDA unavailable."""
+    if device_str.startswith('cuda'):
+        if torch.cuda.is_available():
+            return torch.device(device_str)
+        else:
+            print(f"[WARN] CUDA requested but not available. Falling back to CPU.")
+            return torch.device('cpu')
+    else:
+        return torch.device(device_str)
+
+
 def to_tensor_dataset(x: np.ndarray, t: np.ndarray, device: str = "cuda:0"):
     """Convert numpy arrays to torch tensors and TensorDataset."""
     if x.ndim == 2:
@@ -108,17 +120,70 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, print_every
     """Train model for one epoch."""
     model.train()
     total = 0.0
+    use_cuda = device.type == 'cuda'
+    scaler = getattr(train_one_epoch, "_scaler", None)
+    if scaler is None:
+        scaler = torch.amp.GradScaler('cuda', enabled=use_cuda)
+        setattr(train_one_epoch, "_scaler", scaler)
+    
+    # Clear GPU memory before training
+    if use_cuda:
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    
     for i, (xb, yb) in enumerate(dataloader):
-        xb = xb.to(device)
-        yb = yb.to(device)
-        optimizer.zero_grad()
-        pred = model(xb)
-        loss = criterion(pred, yb)
-        loss.backward()
-        optimizer.step()
-        total += loss.item() * xb.size(0)
-        if (i + 1) % print_every == 0:
-            print(f"  [train] step {i+1}/{len(dataloader)} loss={loss.item():.6f}")
+        try:
+            # Ensure tensors are contiguous and on correct device
+            if not xb.is_contiguous():
+                xb = xb.contiguous()
+            if not yb.is_contiguous():
+                yb = yb.contiguous()
+            
+            xb = xb.to(device, non_blocking=False)  # Use blocking for stability
+            yb = yb.to(device, non_blocking=False)
+            
+            optimizer.zero_grad(set_to_none=True)
+            with torch.amp.autocast('cuda', enabled=use_cuda):
+                pred = model(xb)
+                # Verify shapes match
+                if pred.shape[0] != yb.shape[0]:
+                    raise RuntimeError(f"Batch size mismatch: pred={pred.shape[0]}, yb={yb.shape[0]}")
+                loss = criterion(pred, yb)
+            
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            
+            loss_value = loss.item()
+            total += loss_value * xb.size(0)
+            
+            # Clear intermediate tensors and free memory
+            del pred, loss
+            if use_cuda:
+                # Synchronize all GPUs if using DataParallel
+                if isinstance(model, nn.DataParallel):
+                    # Synchronize all devices used by DataParallel
+                    for i in range(torch.cuda.device_count()):
+                        torch.cuda.synchronize(i)
+                else:
+                    torch.cuda.synchronize()  # Single GPU
+                
+                # Periodically clear cache to prevent fragmentation
+                if (i + 1) % 10 == 0:
+                    torch.cuda.empty_cache()
+            
+            if (i + 1) % print_every == 0:
+                print(f"  [train] step {i+1}/{len(dataloader)} loss={loss_value:.6f}")
+        except RuntimeError as e:
+            if 'CUDA' in str(e) or 'illegal memory access' in str(e).lower():
+                print(f"[ERROR] CUDA error at batch {i}: {e}")
+                if use_cuda:
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                raise
+            else:
+                raise
+    
     return total / len(dataloader.dataset)
 
 
@@ -128,11 +193,13 @@ def evaluate(model, dataloader, criterion, device):
     model.eval()
     total = 0.0
     preds, targets = [], []
+    use_cuda = device.type == 'cuda'
     for xb, yb in dataloader:
         xb = xb.to(device)
         yb = yb.to(device)
-        pred = model(xb)
-        loss = criterion(pred, yb)
+        with torch.amp.autocast('cuda', enabled=use_cuda):
+            pred = model(xb)
+            loss = criterion(pred, yb)
         total += loss.item() * xb.size(0)
         preds.append(pred.cpu())
         targets.append(yb.cpu())
@@ -144,24 +211,25 @@ def evaluate(model, dataloader, criterion, device):
 
 
 def create_model(cfg, x_sample: torch.Tensor, out_dim: int, device: torch.device):
-    """Create model based on configuration and data shape."""
+    """Create model based on configuration and data shape, with OOM-safe device move."""
     if x_sample.ndim == 3:
         # 1D CNN
         in_channels = x_sample.shape[1]
         length = x_sample.shape[2]
-        model = SimpleCNNReal(input_length=length, in_channels=in_channels, out_dim=out_dim).to(device)
+        model = SimpleCNNReal(input_length=length, in_channels=in_channels, out_dim=out_dim)
         print(f"[OK] Using Conv1d model (C={in_channels}, L={length})")
-        
     elif x_sample.ndim == 4:
         # 2D CNN for image data
-        if x_sample.shape[1] not in (1, 3, 4):
+        valid_channel_counts = {1, 2, 3, 4, cfg.model.get('in_channels', 0)}
+        # Remove zeros to avoid false positives when in_channels not set
+        valid_channel_counts.discard(0)
+
+        if x_sample.shape[1] not in valid_channel_counts:
             x_nchw = x_sample.permute(0, 3, 1, 2).contiguous()
             print("[INFO] Transposed NHWC -> NCHW")
         else:
             x_nchw = x_sample
-            
         in_channels = x_nchw.shape[1]
-        
         # Get resize parameters from config
         resize_hw = cfg.model.resize_hw
         if resize_hw and resize_hw[0] > 0 and resize_hw[1] > 0:
@@ -189,7 +257,18 @@ def create_model(cfg, x_sample: torch.Tensor, out_dim: int, device: torch.device
         
     else:
         raise RuntimeError("Unexpected tensor ndim for model selection")
-    
+
+    # Try moving to device; on OOM retry with half precision
+    try:
+        model = model.to(device)
+    except RuntimeError as e:
+        if device.type == 'cuda' and 'out of memory' in str(e).lower():
+            print("[WARN] OOM while moving model to GPU. Retrying with half precision (fp16)...")
+            torch.cuda.empty_cache()
+            model = model.half().to(device)
+        else:
+            raise
+
     print(f"[OK] Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     return model
 
@@ -245,7 +324,7 @@ def main(cfg):
             print(f"[WARN] Could not remove Hydra output directory {outputs_dir}: {e}")
     
     # Create time-based output directory under airlift/data/outputs_real/YYYY-MM-DD/HH-MM-SS
-    outputs_root = "/home/smatsubara/documents/airlift/data/outputs_real"
+    outputs_root = cfg.output.model_save_dir
     now = datetime.datetime.now()
     run_dir = os.path.join(outputs_root, now.strftime('%Y-%m-%d'), now.strftime('%H-%M-%S'))
     base_dir = run_dir
@@ -271,15 +350,41 @@ def main(cfg):
     # Set reproducibility
     torch.manual_seed(cfg.training.seed)
     np.random.seed(cfg.training.seed)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
-    
+
+    # Clear GPU memory before starting
+    device = get_valid_device(cfg.training.device)
+    if device.type == 'cuda':
+        print("[INFO] Clearing GPU memory...")
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        # Reset peak memory stats
+        for i in range(torch.cuda.device_count()):
+            torch.cuda.reset_peak_memory_stats(i)
+        print(f"[OK] GPU memory cleared")
+
+    # cuDNN autotune for convs
+    torch.backends.cudnn.benchmark = True
+
     t0 = time.time()
     
     # Load data
     print("[STEP] Loading dataset files...")
     x, t = load_npz_pair(cfg.dataset.x_train, cfg.dataset.t_train, cfg.dataset.x_key, cfg.dataset.t_key)
     print(f"[OK] Loaded. x.shape={x.shape}, t.shape={t.shape} (elapsed {time.time()-t0:.2f}s)")
+    
+    # Exclude Channel 1 and Channel 3 (keep only channels 0, 2)
+    if x.ndim == 4 and x.shape[1] == 4:
+        print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
+        x = x[:, [0, 2], :, :]  # Keep only channels 0, 2
+        print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
+        # Update model config to reflect 2 channels
+        cfg.model.in_channels = 2
+    elif x.ndim == 3 and x.shape[1] == 4:
+        print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
+        x = x[:, [0, 2], :]  # Keep only channels 0, 2
+        print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
+        # Update model config to reflect 2 channels
+        cfg.model.in_channels = 2
     
     # Check for NaNs
     if np.isnan(x).any():
@@ -356,7 +461,7 @@ def main(cfg):
     # Create model
     print("[STEP] Build model...")
     x_sample = dataset.tensors[0]
-    device = torch.device(cfg.training.device)
+    device = get_valid_device(cfg.training.device)
     out_dim = dataset.tensors[1].shape[1] if dataset.tensors[1].ndim == 2 else 1
     model = create_model(cfg, x_sample, out_dim, device)
     
