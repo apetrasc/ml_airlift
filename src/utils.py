@@ -149,10 +149,10 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
         x_test = np.nan_to_num(x_test)
     print(f'x_test shape: {x_test.shape}')
     argmax_pipe_ref2 = np.argmax(x_test[1000,:])
-    x_test = x_test[:,argmax_pipe_ref2-170:argmax_pipe_ref2+2330]
-    raw_tmp = raw_tmp[:,argmax_pipe_ref2-170:argmax_pipe_ref2+2330]
-    # x_test = x_test[:,208:2708]
-    # raw_tmp = raw_tmp[:,208:2708]
+    # x_test = x_test[:,argmax_pipe_ref2-170:argmax_pipe_ref2+2330]
+    # raw_tmp = raw_tmp[:,argmax_pipe_ref2-170:argmax_pipe_ref2+2330]
+    x_test = x_test[:,208:2708]
+    raw_tmp = raw_tmp[:,208:2708]
     print(f'argmax {argmax_pipe_ref2}')
     pulse_num = x_test.shape[0]
     x_test_tensor = torch.from_numpy(x_test).float()
@@ -322,10 +322,10 @@ def  rolling_window_signal(rolling_window, window_size=20, x_test=None):
         s =pl.from_numpy(np.transpose(x_test))
 
         # s = s.select(pl.all().rolling_mean(
-        #     window_size=window_size,
+        #     window_size=window_size//2,
         #     min_periods=1
         # ))
-        s = s.select(pl.all().rolling_min(
+        s = s.select(pl.all().rolling_mean(
             window_size=window_size,
             min_periods=1
         ))
