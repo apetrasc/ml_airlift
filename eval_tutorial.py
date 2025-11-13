@@ -94,8 +94,10 @@ def preprocess_for_gradcam(file_path, sample_index=500, channel_index=0):
         raise RuntimeError(f"Invalid channel_index {channel_index}, C={C}")
     x = x[:,:,channel_index]
     signal = preprocess(x_raw=x, device=device)
-    signal = signal[sample_index,0,:]
-    signal = signal.unsqueeze(0)
+    signal = signal.squeeze(1)
+    signal = signal.cpu()
+    signal = signal[sample_index,:]
+    signal = signal.unsqueeze(0).unsqueeze(0)
     # signal = x[sample_index, :, channel_index]
     # mean = np.mean(signal)
     # std = np.std(signal)
