@@ -22,6 +22,8 @@ def preprocess(x_raw, device, fs=None):
     Returns:
         torch.Tensor: Preprocessed tensor ready for model input
     """
+
+    # fsの定義が必要
     if fs is not None:
         sos = signal.butter(N=16,Wn=[1e6,10e6],btype='bandpass',output='sos',fs=fs)
         x_raw = signal.sosfiltfilt(sos,x_raw,axis=1)
@@ -29,11 +31,7 @@ def preprocess(x_raw, device, fs=None):
     x_test = np.abs(signal.hilbert(x_raw,axis=1))
 
     x_test = erode_signals(x_test, window_size=30)
-
-    # x_raw_torch = torch.from_numpy(x_raw).float()
-    # x_raw_torch = x_raw_torch.to(device)
-    # x_test = hilbert_cuda(x_raw_torch, device)
-    #print("hilbert transform done")
+    
     if np.isnan(x_test).any():
         print("nan")
         x_test = np.nan_to_num(x_test)
