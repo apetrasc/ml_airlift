@@ -1,10 +1,10 @@
 import numpy as np
 import torch
-from scipy.signal import hilbert
+import scipy.signal as signal
 import matplotlib.pyplot as plt
 import yaml
 import os
-def preprocess(x_raw, device):
+def preprocess(x_raw, device, fs=None):
     """
     Preprocess the input data for model prediction.
     This includes:
@@ -22,9 +22,17 @@ def preprocess(x_raw, device):
     Returns:
         torch.Tensor: Preprocessed tensor ready for model input
     """
-    x_raw_torch = torch.from_numpy(x_raw).float()
-    x_raw_torch = x_raw_torch.to(device)
-    x_test = hilbert_cuda(x_raw_torch, device)
+    if fs is not None:
+        sos = signal.butter(N=16,Wn=[1e6,10e6],btype='bandpass',output='sos',fs=fs)
+        x_raw = signal.sosfiltfilt(sos,x_raw,axis=1)
+
+    x_test = np.abs(signal.hilbert(x_raw,axis=1))
+
+    x_test = erode_signals(x_test, window_size=30)
+
+    # x_raw_torch = torch.from_numpy(x_raw).float()
+    # x_raw_torch = x_raw_torch.to(device)
+    # x_test = hilbert_cuda(x_raw_torch, device)
     #print("hilbert transform done")
     if np.isnan(x_test).any():
         print("nan")
@@ -34,7 +42,7 @@ def preprocess(x_raw, device):
     # Add channel dimension: (batch, 1, length, channel)
     x_test_tensor_all = x_test_tensor.unsqueeze(1)
     # Normalize each (length, channel) column for each sample in the batch
-    c=0.4
+    c=0
     max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]+c
     max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
     x_test_tensor_all = x_test_tensor_all / max_values_per_column
@@ -104,11 +112,12 @@ def preprocess_and_predict(path, model, device, plot_index=80):
 
     # Load and preprocess data
     x_raw = np.load(path)["processed_data"][:,:,0]
+    fs = np.load(path)["fs"]
     
     import os
     filename = os.path.basename(path)
     print(f"loading successful and processing {filename}..")
-    x_test_tensor_cnn = preprocess(x_raw, device)
+    x_test_tensor_cnn = preprocess(x_raw, device, fs)
     # Model prediction
     model.eval()
     with torch.no_grad():
@@ -307,3 +316,14 @@ def get_valid_data(x, y, yerr):
     y_valid = y[mask]
     yerr_valid = yerr[mask]
     return x_valid, y_valid, yerr_valid
+
+def erode_signals(x, window_size=30):
+    import polars as pl
+    s=pl.from_numpy(np.transpose(x))
+
+    s = s.select(pl.all().rolling_min(
+        window_size=window_size,
+        min_periods=1
+    ))
+    x = s.to_numpy().transpose()
+    return x
