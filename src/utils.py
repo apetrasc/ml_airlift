@@ -316,7 +316,7 @@ def sigmoid_fitting(x_test_all, fs):
             print(f'{count}回目終了')
     return np.array(x_test_sigmoid)
 
-def  rolling_window_signal(rolling_window, window_size=20, x_test=None):
+def  rolling_window_signal(rolling_window, window_size=30, x_test=None):
     import polars as pl
     if rolling_window:
         s =pl.from_numpy(np.transpose(x_test))
