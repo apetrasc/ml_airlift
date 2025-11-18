@@ -325,7 +325,7 @@ def  rolling_window_signal(rolling_window, window_size=30, x_test=None):
         #     window_size=window_size//2,
         #     min_periods=1
         # ))
-        s = s.select(pl.all().rolling_mean(
+        s = s.select(pl.all().rolling_min(
             window_size=window_size,
             min_periods=1
         ))
