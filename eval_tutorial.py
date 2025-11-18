@@ -13,8 +13,8 @@ import torch.nn.functional as F
 with open('config/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
 
-base_dir = "/home/smatsubara/documents/airlift/data/results"
-file_path = "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20241007-1401_processed.npz"
+base_dir = "/mnt/matsubara/pictures"
+file_path = "/mnt/matsubara/signals_exp/processed_data/all/P20240726-1601_processed.npz"
 # Load the trained model
 model = SimpleCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])
 #model = ResidualCNN(config['hyperparameters']['input_length']).to(config['evaluation']['device'])

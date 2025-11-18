@@ -9,6 +9,7 @@ import time
 import datetime
 import json
 import shutil
+import gc
 import numpy as np
 import torch
 import torch.nn as nn
@@ -19,10 +20,14 @@ from src.evaluate_predictions import create_prediction_plots
 import matplotlib.pyplot as plt
 
 import optuna
-from optuna import Trial
-from omegaconf import OmegaConf, DictConfig
-import torch
-import torch.nn as nn
+from optuna.trial import Trial
+from omegaconf import OmegaConf, DictConfig, ListConfig
+from sklearn.metrics import r2_score
+from sklearn.preprocessing import StandardScaler
+import joblib
+
+# Load config using OmegaConf to enable attribute access
+config = OmegaConf.load('config/config_real_updated.yaml')
 
 # Import functions from train_real.py
 from train_real import (
@@ -36,9 +41,48 @@ from train_real import (
 )
 
 # Paths
-OPTUNA_DIR = "/home/smatsubara/documents/airlift/data/sandbox/optuna"
-OUTPUTS_ROOT = "/home/smatsubara/documents/airlift/data/outputs_real"
-BASE_CONFIG_PATH = "/home/smatsubara/documents/sandbox/ml_airlift/config/config_real_updated.yaml"
+OPTUNA_DIR = config.optuna.dir
+OUTPUTS_ROOT = config.optuna.outputs_dir
+BASE_CONFIG_PATH = config.optuna.base_config_path
+
+
+class WeightedMSELoss(nn.Module):
+    """Weighted MSE Loss for multi-task learning with per-target weights."""
+    def __init__(self, weights=None, reduction='mean'):
+        """
+        Args:
+            weights: Tensor of shape (n_targets,) with weights for each target.
+                     If None, uses uniform weights.
+            reduction: 'mean' or 'sum'
+        """
+        super().__init__()
+        self.weights = weights
+        self.reduction = reduction
+        
+    def forward(self, pred, target):
+        """
+        Args:
+            pred: (batch_size, n_targets)
+            target: (batch_size, n_targets)
+        """
+        mse_per_target = (pred - target) ** 2  # (batch_size, n_targets)
+        
+        if self.weights is not None:
+            # Convert to torch.Tensor if not already
+            if not isinstance(self.weights, torch.Tensor):
+                # self.weights should be a list or numpy array at this point
+                # (OmegaConf.ListConfig is converted to list in objective function)
+                weights_tensor = torch.tensor(self.weights, device=pred.device, dtype=pred.dtype)
+                self.weights = weights_tensor
+            
+            mse_per_target = mse_per_target * self.weights.unsqueeze(0)  # Broadcast weights
+        
+        if self.reduction == 'mean':
+            return mse_per_target.mean()
+        elif self.reduction == 'sum':
+            return mse_per_target.sum()
+        else:
+            return mse_per_target
 
 
 def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
@@ -64,7 +108,7 @@ def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
     cfg.training.learning_rate = trial.suggest_float(
         'training.learning_rate', 1e-5, 1e-2, log=True
     )
-    cfg.training.batch_size = trial.suggest_categorical('training.batch_size', [4, 8, 16])
+    cfg.training.batch_size = trial.suggest_categorical('training.batch_size', [2, 4, 8])
     
     # Add weight_decay if not exists
     if 'weight_decay' not in cfg.training:
@@ -81,6 +125,34 @@ def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
     
     # Limit epochs for faster optimization (can be adjusted)
     cfg.training.epochs = trial.suggest_int('training.epochs', 50, 200, step=50)
+    
+    # Target normalization option
+    # Normalization helps when target scales are very different (e.g., 0-100 vs 0-1)
+    cfg.training.normalize_targets = trial.suggest_categorical('training.normalize_targets', [True, False])
+    
+    # Target-specific loss weights (for 6 targets)
+    # Higher weights for poorly performing targets (Solid Velocity, Solid Volume Fraction)
+    # Default: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] (uniform)
+    # We'll suggest weights that favor poorly performing targets
+    use_weighted_loss = trial.suggest_categorical('training.use_weighted_loss', [True, False])
+    if use_weighted_loss:
+        # Suggest weights for each target (higher weight = more emphasis)
+        # Target 0: Solid Velocity (poor performance)
+        # Target 1: Gas Velocity (good performance)
+        # Target 2: Liquid Velocity (moderate performance)
+        # Target 3: Solid Volume Fraction (poor performance)
+        # Target 4: Gas Volume Fraction (good performance)
+        # Target 5: Liquid Volume Fraction (good performance)
+        cfg.training.target_weights = [
+            trial.suggest_float('training.weight_target_0', 1.0, 10.0),  # Solid Velocity
+            trial.suggest_float('training.weight_target_1', 0.1, 2.0),   # Gas Velocity
+            trial.suggest_float('training.weight_target_2', 0.5, 5.0),   # Liquid Velocity
+            trial.suggest_float('training.weight_target_3', 1.0, 10.0),  # Solid Volume Fraction
+            trial.suggest_float('training.weight_target_4', 0.1, 2.0),   # Gas Volume Fraction
+            trial.suggest_float('training.weight_target_5', 0.1, 2.0),   # Liquid Volume Fraction
+        ]
+    else:
+        cfg.training.target_weights = None
     
     return cfg
 
@@ -171,8 +243,12 @@ def save_trial_results(trial: Trial, cfg: DictConfig, output_dir: str,
         for i in range(y_pred.shape[1]):
             target_mse = np.mean((y_pred[:, i] - y_true[:, i])**2)
             target_mae = np.mean(np.abs(y_pred[:, i] - y_true[:, i]))
+            target_rmse = np.sqrt(target_mse)
+            target_r2 = r2_score(y_true[:, i], y_pred[:, i])
             per_target_metrics[f'target_{i+1}_mse'] = float(target_mse)
             per_target_metrics[f'target_{i+1}_mae'] = float(target_mae)
+            per_target_metrics[f'target_{i+1}_rmse'] = float(target_rmse)
+            per_target_metrics[f'target_{i+1}_r2'] = float(target_r2)
         metrics['per_target'] = per_target_metrics
     
     metrics_path = os.path.join(output_dir, 'metrics.json')
@@ -252,6 +328,20 @@ def objective(trial: Trial, base_config_path: str) -> float:
         )
         print(f"[OK] Loaded. x.shape={x.shape}, t.shape={t.shape}")
         
+        # Exclude Channel 1 and Channel 3 (keep only channels 0, 2)
+        if x.ndim == 4 and x.shape[1] == 4:
+            print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
+            x = x[:, [0, 2], :, :]  # Keep only channels 0, 2
+            print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
+            # Update model config to reflect 2 channels
+            cfg.model.in_channels = 2
+        elif x.ndim == 3 and x.shape[1] == 4:
+            print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
+            x = x[:, [0, 2], :]  # Keep only channels 0, 2
+            print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
+            # Update model config to reflect 2 channels
+            cfg.model.in_channels = 2
+        
         # Limit samples if specified
         if cfg.dataset.limit_samples > 0:
             n = min(cfg.dataset.limit_samples, x.shape[0])
@@ -265,19 +355,86 @@ def objective(trial: Trial, base_config_path: str) -> float:
             x = x[:, :, ::cfg.dataset.downsample_factor, :]
             print(f"[INFO] Downsampled H: {h0} -> {x.shape[2]} (factor={cfg.dataset.downsample_factor})")
         
-        # Create dataset
-        print("[STEP] Build dataset tensors...")
-        dataset = to_tensor_dataset(x, t, cfg.training.device)
+        # Target normalization (split data first, then normalize to avoid data leakage)
+        # Check if normalization is enabled
+        use_target_normalization = cfg.training.get('normalize_targets', True)
+        target_scaler = None
         
-        # Split dataset (use fixed seed for consistency)
-        print("[STEP] Split dataset...")
-        train_set, val_set, test_set = split_dataset(
-            dataset,
-            cfg.data_split.train_ratio,
-            cfg.data_split.val_ratio,
-            cfg.data_split.test_ratio,
-            cfg.training.seed  # Fixed seed for all trials
-        )
+        # Split data using indices to maintain order
+        print("[STEP] Splitting data for target normalization...")
+        n_samples = x.shape[0]
+        train_ratio = cfg.data_split.train_ratio
+        val_ratio = cfg.data_split.val_ratio
+        test_ratio = cfg.data_split.test_ratio
+        
+        # Calculate split sizes
+        n_train = int(n_samples * train_ratio)
+        n_val = int(n_samples * val_ratio)
+        n_test = n_samples - n_train - n_val
+        
+        # Create indices and shuffle with fixed seed
+        indices = np.arange(n_samples)
+        rng = np.random.RandomState(cfg.training.seed)
+        rng.shuffle(indices)
+        
+        train_idx = indices[:n_train]
+        val_idx = indices[n_train:n_train+n_val]
+        test_idx = indices[n_train+n_val:]
+        
+        print(f"[OK] Split indices: train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)}")
+        
+        if use_target_normalization:
+            print("[STEP] Normalizing target variables...")
+            # Fit scaler only on training data (to avoid data leakage)
+            t_train_np = t[train_idx]
+            target_scaler = StandardScaler()
+            t_train_scaled = target_scaler.fit_transform(t_train_np)
+            print(f"[OK] Target scaler fitted on training data")
+            print(f"     Mean: {target_scaler.mean_}")
+            print(f"     Std:  {target_scaler.scale_}")
+            
+            # Transform all targets
+            t_val_scaled = target_scaler.transform(t[val_idx])
+            t_test_scaled = target_scaler.transform(t[test_idx])
+            
+            # Create normalized target array (maintaining original order)
+            t_normalized = t.copy()
+            t_normalized[train_idx] = t_train_scaled
+            t_normalized[val_idx] = t_val_scaled
+            t_normalized[test_idx] = t_test_scaled
+            
+            # Create dataset with normalized targets
+            print("[STEP] Build dataset tensors with normalized targets...")
+            dataset = to_tensor_dataset(x, t_normalized, cfg.training.device)
+            
+            # Split dataset using the same indices (create subsets)
+            # Note: We need to create subsets manually to maintain the same split
+            train_indices = torch.tensor(train_idx)
+            val_indices = torch.tensor(val_idx)
+            test_indices = torch.tensor(test_idx)
+            
+            train_set = torch.utils.data.Subset(dataset, train_indices)
+            val_set = torch.utils.data.Subset(dataset, val_indices)
+            test_set = torch.utils.data.Subset(dataset, test_indices)
+            
+            # Save scaler
+            scaler_path = os.path.join(output_dir, "target_scaler.joblib")
+            joblib.dump(target_scaler, scaler_path)
+            print(f"[OK] Target scaler saved to: {scaler_path}")
+        else:
+            # No normalization - use original data
+            print("[STEP] Build dataset tensors (no normalization)...")
+            dataset = to_tensor_dataset(x, t, cfg.training.device)
+            
+            # Split dataset using indices
+            train_indices = torch.tensor(train_idx)
+            val_indices = torch.tensor(val_idx)
+            test_indices = torch.tensor(test_idx)
+            
+            train_set = torch.utils.data.Subset(dataset, train_indices)
+            val_set = torch.utils.data.Subset(dataset, val_indices)
+            test_set = torch.utils.data.Subset(dataset, test_indices)
+        
         print(f"[OK] Sizes -> train={len(train_set)}, val={len(val_set)}, test={len(test_set)}")
         
         # Create dataloaders
@@ -321,7 +478,18 @@ def objective(trial: Trial, base_config_path: str) -> float:
         torch.backends.cudnn.benchmark = True
         
         # Create optimizer and loss
-        criterion = nn.MSELoss()
+        # Use weighted loss if specified
+        target_weights = cfg.training.get('target_weights', None)
+        if target_weights is not None:
+            # Convert OmegaConf.ListConfig to regular list if needed
+            if isinstance(target_weights, ListConfig):
+                target_weights = list(target_weights)
+            
+            print(f"[INFO] Using weighted MSE loss with weights: {target_weights}")
+            criterion = WeightedMSELoss(weights=target_weights, reduction='mean')
+        else:
+            criterion = nn.MSELoss()
+        
         optimizer = optim.Adam(
             model.parameters(),
             lr=cfg.training.learning_rate,
@@ -372,16 +540,36 @@ def objective(trial: Trial, base_config_path: str) -> float:
         
         # 7. Evaluate on test set
         print("[STEP] Testing...")
-        test_mse, test_mae, y_pred, y_true = evaluate(model, test_loader, criterion, device)
+        test_mse, test_mae, y_pred_scaled, y_true_scaled = evaluate(model, test_loader, criterion, device)
         print(f"Test  | MSE={test_mse:.6f} | MAE={test_mae:.6f}")
         
-        # Print per-target results
+        # Inverse transform predictions and targets if normalization was used
+        if target_scaler is not None:
+            print("[STEP] Inverse transforming predictions to original scale...")
+            y_pred = target_scaler.inverse_transform(y_pred_scaled)
+            y_true = target_scaler.inverse_transform(y_true_scaled)
+            print(f"[OK] Predictions and targets converted to original scale")
+        else:
+            y_pred = y_pred_scaled
+            y_true = y_true_scaled
+        
+        # Print per-target results with R² (on original scale)
         if y_pred.shape[1] > 1:
-            print(f"[INFO] Per-target results:")
+            target_names = cfg.evaluation.get('target_names', [f"Target {i+1}" for i in range(y_pred.shape[1])])
+            print(f"[INFO] Per-target results (original scale):")
+            per_target_r2 = []
             for i in range(y_pred.shape[1]):
                 target_mse = np.mean((y_pred[:, i] - y_true[:, i])**2)
                 target_mae = np.mean(np.abs(y_pred[:, i] - y_true[:, i]))
-                print(f"  Target {i+1}: MSE={target_mse:.6f}, MAE={target_mae:.6f}")
+                target_rmse = np.sqrt(target_mse)
+                target_r2 = r2_score(y_true[:, i], y_pred[:, i])
+                per_target_r2.append(target_r2)
+                target_name = target_names[i] if i < len(target_names) else f"Target {i+1}"
+                print(f"  {target_name}: R²={target_r2:.4f}, MSE={target_mse:.6f}, MAE={target_mae:.6f}, RMSE={target_rmse:.6f}")
+            
+            # Set per-target R² as user attributes for Optuna
+            for i, r2 in enumerate(per_target_r2):
+                trial.set_user_attr(f'target_{i}_r2', float(r2))
         
         # 8. Save model
         weights_dir = os.path.join(output_dir, "weights")
@@ -403,21 +591,83 @@ def objective(trial: Trial, base_config_path: str) -> float:
         trial.set_user_attr('test_mae', float(test_mae))
         trial.set_user_attr('best_val_loss', float(best_val_loss))
         trial.set_user_attr('output_dir', output_dir)
+        trial.set_user_attr('target_normalized', use_target_normalization)
+        if target_scaler is not None:
+            trial.set_user_attr('scaler_mean', target_scaler.mean_.tolist())
+            trial.set_user_attr('scaler_scale', target_scaler.scale_.tolist())
         
         elapsed = time.time() - t0
         print(f"\n[OK] Trial {trial.number} completed in {elapsed:.2f}s")
-        print(f"Validation Loss: {best_val_loss:.6f}")
-        print(f"Test MSE: {test_mse:.6f}, Test MAE: {test_mae:.6f}\n")
+        if use_target_normalization:
+            print(f"Validation Loss (normalized scale): {best_val_loss:.6f}")
+        else:
+            print(f"Validation Loss: {best_val_loss:.6f}")
+        print(f"Test MSE (original scale): {test_mse:.6f}, Test MAE (original scale): {test_mae:.6f}\n")
         
-        return best_val_loss
+        result = best_val_loss
+        exception_to_raise = None
         
-    except optuna.TrialPruned:
+    except optuna.TrialPruned as e:
         # Clean up if pruned
-        print(f"[INFO] Cleaning up pruned trial {trial.number}")
-        raise
+        print(f"[INFO] Trial {trial.number} was pruned")
+        result = None
+        exception_to_raise = e
     except Exception as e:
         print(f"[ERROR] Trial {trial.number} failed: {e}")
-        raise
+        result = None
+        exception_to_raise = e
+    finally:
+        # Clean up GPU memory after each trial
+        print(f"[INFO] Cleaning up GPU memory after trial {trial.number}...")
+        
+        # Delete model, optimizer, and other objects
+        try:
+            if 'model' in locals():
+                del model
+            if 'optimizer' in locals():
+                del optimizer
+            if 'criterion' in locals():
+                del criterion
+            if 'train_loader' in locals():
+                del train_loader
+            if 'val_loader' in locals():
+                del val_loader
+            if 'test_loader' in locals():
+                del test_loader
+            if 'train_set' in locals():
+                del train_set
+            if 'val_set' in locals():
+                del val_set
+            if 'test_set' in locals():
+                del test_set
+            if 'dataset' in locals():
+                del dataset
+            if 'x' in locals():
+                del x
+            if 't' in locals():
+                del t
+            
+            # Clear train_one_epoch scaler attribute
+            if hasattr(train_one_epoch, '_scaler'):
+                delattr(train_one_epoch, '_scaler')
+        except Exception as cleanup_error:
+            print(f"[WARNING] Error during cleanup: {cleanup_error}")
+        
+        # Clear GPU cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
+        # Force garbage collection
+        gc.collect()
+        
+        print(f"[OK] GPU memory cleaned up for trial {trial.number}")
+    
+    # Re-raise exceptions after cleanup
+    if exception_to_raise is not None:
+        raise exception_to_raise
+    
+    return result
 
 
 def find_trial_output_dir(trial_number: int) -> str:
@@ -487,6 +737,8 @@ def main():
     """
     Main function to run Optuna optimization.
     """
+    import sys
+    
     # Create Optuna directory
     os.makedirs(OPTUNA_DIR, exist_ok=True)
     
@@ -499,31 +751,43 @@ def main():
     
     # Create or load study
     study_name = 'cnn_hyperparameter_optimization'
+    
+    # Check if study exists and if we should delete it
+    delete_study = os.getenv('OPTUNA_DELETE_STUDY', 'false').lower() == 'true'
+    if delete_study:
+        try:
+            optuna.delete_study(study_name=study_name, storage=storage)
+            print(f"[INFO] Deleted existing study: {study_name}")
+        except Exception as e:
+            print(f"[INFO] Study {study_name} does not exist or could not be deleted: {e}")
+    
+    # Try to load existing study
+    study = None
     try:
+        study = optuna.load_study(
+            study_name=study_name,
+            storage=storage
+        )
+        print(f"[INFO] Loaded existing study: {study_name}")
+        print(f"[INFO] Number of existing trials: {len(study.trials)}")
+    
+    except Exception as e:
+        print(f"[INFO] Study {study_name} does not exist: {e}")
+        study = None
+    
+    # Create new study if needed
+    if study is None:
         study = optuna.create_study(
             study_name=study_name,
             direction='minimize',  # Minimize validation loss
             storage=storage,
-            load_if_exists=True,
             pruner=optuna.pruners.MedianPruner(
                 n_startup_trials=5,      # Don't prune first 5 trials
                 n_warmup_steps=10,        # Wait 10 epochs before pruning
                 interval_steps=1          # Check every epoch
             )
         )
-        print(f"[INFO] Loaded existing study: {study_name}")
-    except Exception as e:
-        print(f"[INFO] Creating new study: {study_name}")
-        study = optuna.create_study(
-            study_name=study_name,
-            direction='minimize',
-            storage=storage,
-            pruner=optuna.pruners.MedianPruner(
-                n_startup_trials=5,
-                n_warmup_steps=10,
-                interval_steps=1
-            )
-        )
+        print(f"[INFO] Created new study: {study_name}")
     
     print(f"[INFO] Study database: {study_db_path}")
     print(f"[INFO] Number of existing trials: {len(study.trials)}\n")
@@ -532,12 +796,42 @@ def main():
     print(f"[INFO] Starting optimization...")
     print(f"[INFO] Base config: {BASE_CONFIG_PATH}\n")
     
-    study.optimize(
-        lambda trial: objective(trial, BASE_CONFIG_PATH),
-        n_trials=20,  # Adjust as needed
-        n_jobs=1,      # Set to 1 for GPU usage, increase for parallel CPU trials
-        show_progress_bar=True
-    )
+    try:
+        study.optimize(
+            lambda trial: objective(trial, BASE_CONFIG_PATH),
+            n_trials=20,  # Adjust as needed
+            n_jobs=1,      # Set to 1 for GPU usage, increase for parallel CPU trials
+            show_progress_bar=True
+        )
+    except ValueError as e:
+        if "CategoricalDistribution does not support dynamic value space" in str(e):
+            print(f"\n[WARNING] Parameter distribution incompatibility detected: {e}")
+            print(f"[INFO] Creating new study with timestamp to avoid incompatibility...")
+            
+            # Create new study with timestamp
+            new_study_name = f'cnn_hyperparameter_optimization_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}'
+            study = optuna.create_study(
+                study_name=new_study_name,
+                direction='minimize',
+                storage=storage,
+                pruner=optuna.pruners.MedianPruner(
+                    n_startup_trials=5,
+                    n_warmup_steps=10,
+                    interval_steps=1
+                )
+            )
+            print(f"[INFO] Created new study: {new_study_name}")
+            print(f"[INFO] Retrying optimization with new study...\n")
+            
+            # Retry optimization with new study
+            study.optimize(
+                lambda trial: objective(trial, BASE_CONFIG_PATH),
+                n_trials=20,
+                n_jobs=1,
+                show_progress_bar=True
+            )
+        else:
+            raise
     
     # Print best trial results
     print(f"\n{'='*60}")

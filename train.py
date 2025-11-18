@@ -22,10 +22,11 @@ def main(cfg):
 
     # Get hydra run directory as base path for reading relative inputs
     base_dir = os.getcwd()
-    # Create time-based output directory under airlift/data/outputs/YYYY-MM-DD/HH-MM-SS
-    outputs_root = "/home/smatsubara/documents/airlift/data/outputs"
+    # Create time-based output directory under /mnt/matsubara/outputs/YYYY-MM-DD/HH-MM-SS
+    outputs_root = "/mnt/matsubara/outputs"
     now = datetime.datetime.now()
-    run_dir = os.path.join(outputs_root, now.strftime('%Y-%m-%d'), now.strftime('%H-%M-%S'))
+    date_dir = now.strftime('%Y-%m-%d')
+    run_dir = os.path.join(outputs_root, date_dir, now.strftime('%H-%M-%S'))
     logs_dir = os.path.join(run_dir, "logs")
     os.makedirs(logs_dir, exist_ok=True)
     print(f"Run directory: {os.path.abspath(run_dir)}")
@@ -36,6 +37,37 @@ def main(cfg):
 
     x_train_tensor = torch.from_numpy(x_train).float()
     t_train_tensor = torch.from_numpy(t_train).float()
+
+    # Helper function to validate and get device
+    def get_valid_device(device_str):
+        """Validate device string and return valid device, fallback to cuda:0 or CPU if invalid."""
+        try:
+            device = torch.device(device_str)
+            if device.type == 'cuda' and not torch.cuda.is_available():
+                print(f"CUDA device '{device_str}' unavailable. Falling back to CPU.")
+                return torch.device("cpu")
+            elif device.type == 'cuda':
+                device_idx = int(str(device).split(":")[-1])
+                if device_idx >= torch.cuda.device_count():
+                    # If GPU is available but invalid device ordinal, use cuda:0 instead of CPU
+                    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+                        print(f"CUDA device ordinal {device_idx} invalid (only {torch.cuda.device_count()} devices). Falling back to cuda:0.")
+                        return torch.device("cuda:0")
+                    else:
+                        print(f"CUDA device ordinal {device_idx} invalid. No CUDA devices available. Falling back to CPU.")
+                        return torch.device("cpu")
+            return device
+        except Exception as e:
+            # If error occurs but CUDA is available, try cuda:0
+            if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+                print(f"Error selecting device '{device_str}': {e}. Falling back to cuda:0.")
+                return torch.device("cuda:0")
+            else:
+                print(f"Error selecting device '{device_str}': {e}. Using CPU.")
+                return torch.device("cpu")
+    
+    # Check for valid CUDA device for training, fallback to CPU if invalid
+    device1 = get_valid_device(cfg.training.device)
     if t_train_tensor.ndim == 1:
         t_train_tensor = t_train_tensor.unsqueeze(-1)
     if x_train_tensor.ndim == 1:
@@ -51,10 +83,9 @@ def main(cfg):
     
 
     torch.manual_seed(cfg.hyperparameters.seed)
-    device1 = torch.device(cfg.training.device)
-
-    t_train_tensor = torch.from_numpy(t_train).float().to(device1)
-    x_train_tensor = torch.from_numpy(x_train).float().to(device1)
+    # Move tensors to device after initial checks and unsqueezing (and after seeding)
+    x_train_tensor = x_train_tensor.to(device1)
+    t_train_tensor = t_train_tensor.to(device1)
     print(t_train_tensor.shape)
     print(x_train_tensor.shape)
 
@@ -84,9 +115,9 @@ def main(cfg):
     # Load pretrained weights and fine-tune only the last layer (fc)
     model = SimpleCNN(size).to(device1)
     # Load pretrained weights (make sure the model definition matches)
-    pretrained_path = "/home/smatsubara/documents/sandbox/ml_airlift/models/layernorm/weights/model.pth"
+    pretrained_path = cfg.training.pretrained_path
     try:
-        state_dict = torch.load(pretrained_path, map_location=device1)
+        state_dict = torch.load(pretrained_path, map_location=device1, weights_only=True)
         model.load_state_dict(state_dict, strict=False)
     except Exception as e:
         print(f"Warning: Could not load pretrained weights from {pretrained_path}. Exception: {e}")
@@ -161,7 +192,7 @@ def main(cfg):
     # Create weights directory inside the same run directory structure
     weights_dir = os.path.join(run_dir, "weights")
     os.makedirs(weights_dir, exist_ok=True)
-    sota_dir="/home/smatsubara/documents/sandbox/ml_airlift/models/layernorm/weights"
+    sota_dir=cfg.training.pretrained_path
     #torch.save(model.state_dict(), os.path.join(sota_dir, 'model.pth'))
     torch.save(model.state_dict(), os.path.join(weights_dir, 'model.pth'))
     plt.figure()
@@ -187,15 +218,17 @@ def main(cfg):
     plt.close()
 
     #model.load_state_dict(torch.load(os.path.join(sota_dir, 'model.pth')))
-    model.load_state_dict(torch.load(os.path.join(weights_dir, 'model.pth')))
-    model = model.to(cfg.evaluation.device)
+    model.load_state_dict(torch.load(os.path.join(weights_dir, 'model.pth'), weights_only=True))
+    # Validate evaluation device
+    eval_device = get_valid_device(cfg.evaluation.device)
+    model = model.to(eval_device)
     model.eval()
     val_predictions = []
     val_targets = []
     with torch.no_grad():
         for val_x, val_y in val_dataloader:
-            val_x = val_x.to(cfg.evaluation.device)
-            val_y = val_y.to(cfg.evaluation.device)
+            val_x = val_x.to(eval_device)
+            val_y = val_y.to(eval_device)
             outputs = model(val_x)
             val_predictions.append(outputs.cpu())
             val_targets.append(val_y.cpu())
@@ -308,7 +341,7 @@ def main(cfg):
             target_layer_1d.bias.requires_grad_(True)
         grad_cam_1d = GradCAM1d(model, target_layer_1d)
         for val_x, _ in val_dataloader:
-            sample_input = val_x[0].unsqueeze(0).to(cfg.evaluation.device)
+            sample_input = val_x[0].unsqueeze(0).to(eval_device)
             break
         sample_input.requires_grad_(True)
         grad_cam_map = grad_cam_1d(sample_input)
