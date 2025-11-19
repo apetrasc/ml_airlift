@@ -132,7 +132,24 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
     from scipy import signal
     x_tmp = x_test.copy()
     x_tmp_for_fft = x_test.copy()
-    x_test_filterd=filter_signal(filter_freq, x_tmp, fs)
+    import pywt
+
+    x_tmp = x_tmp - np.mean(x_tmp, axis=1)[:,np.newaxis]
+    def maddest(d, axis=None):
+        return np.mean(np.absolute(d - np.mean(d, axis)[:,np.newaxis]), axis)
+    def denoise(x, wavelet='db9', level=1):
+        coeff = pywt.wavedec(x, wavelet, mode="per",axis=1)
+        # print(coeff[-level].shape) (14700, 1500)
+        sigma = (1/0.6745) * maddest(coeff[-level],axis=1)
+        # print(sigma.shape) (14700,)
+        # print(coeff[0].shape) (14700, 24)
+        uthresh = sigma * np.sqrt(2*np.log(x.shape[1]))
+        uthresh = uthresh[:,np.newaxis]
+        coeff[1:] = (pywt.threshold(i, value=uthresh, mode='hard') for i in coeff[1:])
+        return pywt.waverec(coeff, wavelet, mode='per',axis=1)
+    x_test_filterd = denoise(x_tmp)
+
+    # x_test_filterd=filter_signal(filter_freq, x_tmp, fs)
     x_test = x_test_filterd.copy()
     raw_tmp = x_test.copy()
     if if_hilbert:
@@ -243,7 +260,7 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
         plt.plot(t*1e6,raw_tmp[plot_idx,:],
                  color='blue',label='Raw Signal')
         plt.xlabel("Time (µs)")
-        plt.xlim(0, 10)
+        plt.xlim(0, 50)
         plt.ylim(-1.5, 1.5)
         plt.ylabel("Amplitude (V)")
         plt.tight_layout()
@@ -321,10 +338,10 @@ def  rolling_window_signal(rolling_window, window_size=30, x_test=None):
     if rolling_window:
         s =pl.from_numpy(np.transpose(x_test))
 
-        # s = s.select(pl.all().rolling_mean(
-        #     window_size=window_size//2,
-        #     min_periods=1
-        # ))
+        s = s.select(pl.all().rolling_mean(
+            window_size=window_size//3,
+            min_periods=1
+        ))
         s = s.select(pl.all().rolling_min(
             window_size=window_size,
             min_periods=1
