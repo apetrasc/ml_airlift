@@ -17,6 +17,8 @@ import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, random_split
 import matplotlib.pyplot as plt
 
+import scipy.signal as signal
+
 import optuna
 from optuna.trial import Trial
 from omegaconf import OmegaConf, DictConfig
@@ -88,9 +90,10 @@ def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
         )
     
     # Data hyperparameters
-    cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 1, 4)
+    # cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 1, 4)
+    cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 2, 5)
     
-    # Limit epochs for faster optimization (can be adjusted)
+    # Limit epochs for faster optimization (can be adddddjusted)
     cfg.training.epochs = trial.suggest_int('training.epochs', 50, 200, step=50)
     
     return cfg
@@ -206,6 +209,39 @@ def save_trial_results(trial: Trial, cfg: DictConfig, output_dir: str,
     print(f"[OK] Trial {trial.number} results saved to {output_dir}")
 
 
+def preprocess(x: np.ndarray):
+    """
+    preprocess signals for machine learning.
+
+    Flow
+    1. Filter raw signal (i.e. bandpass, wavelet)
+    2. Take amplitude using hilbert transform.
+    3. Filter image (i.e. opencv)
+    4. Take log1p
+
+    Args:
+        x: ndarray (shape: (number of experiment, transducer channel, number of pulse, data length per pulse))
+
+    Return:
+        x: ndarray (same shape as x)
+    """
+    fs = 52083333.842615336
+
+    sos = signal.butter(N=16, Wn=[1e6, 10e6], btype="bandpass",
+                        output="sos", fs=fs)
+    x = signal.sosfiltfilt(sos=sos, x=x, axis=3)
+    print("Filtering raw signal done.")
+    del sos
+    for i in range(x.shape[1]):
+        x[:,i,:,:] = np.abs(signal.hilbert(x[:,i,:,:], axis=2))
+    print("Hilbert done.")
+    max_values_per_col = np.max(x[:,:,:,250:350], axis=3, keepdims=True)
+    x = x/max_values_per_col
+    del max_values_per_col
+    x = np.log1p(x)
+    print("Preprocess done.")
+    return x
+
 def objective(trial: Trial, base_config_path: str) -> float:
     """
     Optuna objective function.
@@ -298,6 +334,12 @@ def objective(trial: Trial, base_config_path: str) -> float:
             x = x[:, :, ::cfg.dataset.downsample_factor, :]
             print(f"[INFO] Downsampled H: {h0} -> {x.shape[2]} (factor={cfg.dataset.downsample_factor})")
         
+        # Preprocess
+        x = preprocess(x)
+        print(f"x.shape: {x.shape}")
+        print(f"x.min: {np.min(x)}")
+        print(f"x.max: {np.max(x)}")
+
         # Create dataset
         print("[STEP] Build dataset tensors...")
         dataset = to_tensor_dataset(x, t, cfg.training.device)
@@ -367,7 +409,7 @@ def objective(trial: Trial, base_config_path: str) -> float:
             lr=cfg.training.learning_rate,
             weight_decay=cfg.training.weight_decay
         )
-        
+
         # 6. Training with pruning support
         print("[STEP] Training...")
         train_losses = []
