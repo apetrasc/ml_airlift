@@ -99,6 +99,72 @@ def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+class GradCAM:
+    def __init__(self,model,target_layer):
+        self.model=model
+        self.target_layer=target_layer
+        self.gradient = None
+        self.activations=None
+        self.hook_handles=[]
+        self._register_hooks()
+
+    def _register_hooks(self):
+        def forward_hook(output):
+            self.activations=output.detach()
+        def backward_hook(grad_out):
+            self.gradients = grad_out[0].detach()
+        self.hook_handles.append(self.target_layer.register_forward_hook(forward_hook))
+        self.hook_handles.append(self.target_layer.register_backward_hook(backward_hook))
+
+    def __call__(self, input_tensor, batch=False):
+        """
+        Compute Grad-CAM map(s) for the provided input tensor.
+
+        Args:
+            input_tensor (torch.Tensor): Tensor of shape [B, C, L] or [1, C, L].
+            batch (bool): If True, compute Grad-CAM for each sample independently
+                          and return a NumPy array of shape [B, L].
+                          If False, return a NumPy array of shape [L].
+        """
+        if batch:
+            cam_list = []
+            for sample in input_tensor:
+                cam = self._compute_single(sample.unsqueeze(0))
+                cam_list.append(cam)
+            return np.stack(cam_list, axis=0)
+
+        return self._compute_single(input_tensor)
+
+    def _compute_single(self, input_tensor):
+        self.model.eval()
+        device = next(self.model.parameters()).device
+        input_tensor = input_tensor.detach().to(device)
+        input_tensor.requires_grad_(True)
+        self.model.zero_grad()
+        out = self.model(input_tensor)
+        if isinstance(out, (tuple, list)):
+            out = out[0]
+        target = out.squeeze()
+        if target.ndim > 0:
+            target = target.sum()
+        self.model.zero_grad()
+        target.backward(retain_graph=True)
+        gradients = self.gradients         # [B, C, L]
+        activations = self.activations     # [B, C, L]
+        weights = gradients.mean(dim=2, keepdim=True)  # [B, C, 1]
+        grad_cam_map = (weights * activations).sum(dim=1, keepdim=True)  # (B,1,L)
+        grad_cam_map = torch.relu(grad_cam_map)
+        grad_cam_map = torch.nn.functional.interpolate(
+            grad_cam_map, size=input_tensor.shape[2], mode='linear', align_corners=False
+        )
+        grad_cam_map = grad_cam_map.squeeze().cpu().numpy()
+        grad_cam_map = (grad_cam_map - grad_cam_map.min()) / (grad_cam_map.max() - grad_cam_map.min() + 1e-8)
+        return grad_cam_map
+
+    def remove_hooks(self):
+        for handle in self.hook_handles:
+            handle.remove()
+
 def create_trial_output_dir(trial_number: int) -> str:
     """
     Create output directory for a trial following train_real.py structure.
@@ -334,11 +400,13 @@ def objective(trial: Trial, base_config_path: str) -> float:
             x = x[:, :, ::cfg.dataset.downsample_factor, :]
             print(f"[INFO] Downsampled H: {h0} -> {x.shape[2]} (factor={cfg.dataset.downsample_factor})")
         
-        # Preprocess
-        x = preprocess(x)
-        print(f"x.shape: {x.shape}")
-        print(f"x.min: {np.min(x)}")
-        print(f"x.max: {np.max(x)}")
+        # # Preprocess
+        # x = preprocess(x)
+        # print(f"x.shape: {x.shape}")
+        # print(f"x.min: {np.min(x)}")
+        # print(f"x.max: {np.max(x)}")
+
+        x=x[:,0,:,:]
 
         # Create dataset
         print("[STEP] Build dataset tensors...")
