@@ -406,7 +406,8 @@ def objective(trial: Trial, base_config_path: str) -> float:
         # print(f"x.min: {np.min(x)}")
         # print(f"x.max: {np.max(x)}")
 
-        x=x[:,0,:,:]
+        # x=x[:,0,:,:]
+        # x=x[:,np.newaxis,:,:]
 
         # Create dataset
         print("[STEP] Build dataset tensors...")

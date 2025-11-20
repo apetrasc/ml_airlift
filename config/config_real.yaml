@@ -2,7 +2,7 @@
 
 # Data configuration
 dataset:
-  x_train: /mnt/sdb/yyamaguchi/airlift/data/experiments/dropped_data/x_train_dropped.npy
+  x_train: /mnt/sdb/yyamaguchi/airlift/data/experiments/dropped_data/x_train_single.npy
   t_train: /mnt/sdb/yyamaguchi/airlift/data/experiments/dropped_data/t_train_dropped.npy
   x_key: x_train_real
   t_key: t_train_real
