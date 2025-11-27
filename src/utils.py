@@ -319,6 +319,11 @@ def erode_signals(x, window_size=30):
     import polars as pl
     s=pl.from_numpy(np.transpose(x))
 
+    s = s.select(pl.all().rolling_mean(
+        window_size=window_size//3,
+        min_periods=1
+    ))
+
     s = s.select(pl.all().rolling_min(
         window_size=window_size,
         min_periods=1

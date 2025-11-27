@@ -300,11 +300,14 @@ def preprocess(x: np.ndarray):
     del sos
     for i in range(x.shape[1]):
         x[:,i,:,:] = np.abs(signal.hilbert(x[:,i,:,:], axis=2))
+    wall_idx=np.argmax(x>0.5,axis=1)
+    start_idx=np.mean(wall_idx).astype(int)+180
     print("Hilbert done.")
     max_values_per_col = np.max(x[:,:,:,250:350], axis=3, keepdims=True)
     x = x/max_values_per_col
     del max_values_per_col
     x = np.log1p(x)
+    x=x[:,start_idx:start_idx+1500]
     print("Preprocess done.")
     return x
 
@@ -400,14 +403,14 @@ def objective(trial: Trial, base_config_path: str) -> float:
             x = x[:, :, ::cfg.dataset.downsample_factor, :]
             print(f"[INFO] Downsampled H: {h0} -> {x.shape[2]} (factor={cfg.dataset.downsample_factor})")
         
-        # # Preprocess
-        # x = preprocess(x)
-        # print(f"x.shape: {x.shape}")
-        # print(f"x.min: {np.min(x)}")
-        # print(f"x.max: {np.max(x)}")
+        # Preprocess
+        x = preprocess(x)
+        print(f"x.shape: {x.shape}")
+        print(f"x.min: {np.min(x)}")
+        print(f"x.max: {np.max(x)}")
 
-        # x=x[:,0,:,:]
-        # x=x[:,np.newaxis,:,:]
+        x=x[:,0,:,:]
+        x=x[:,np.newaxis,:,:]
 
         # Create dataset
         print("[STEP] Build dataset tensors...")
