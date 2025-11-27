@@ -17,6 +17,8 @@ import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, random_split
 import matplotlib.pyplot as plt
 
+import scipy.signal as signal
+
 import optuna
 from optuna.trial import Trial
 from omegaconf import OmegaConf, DictConfig
@@ -88,13 +90,80 @@ def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
         )
     
     # Data hyperparameters
-    cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 1, 4)
+    # cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 1, 4)
+    cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 2, 5)
     
-    # Limit epochs for faster optimization (can be adjusted)
+    # Limit epochs for faster optimization (can be adddddjusted)
     cfg.training.epochs = trial.suggest_int('training.epochs', 50, 200, step=50)
     
     return cfg
 
+
+class GradCAM:
+    def __init__(self,model,target_layer):
+        self.model=model
+        self.target_layer=target_layer
+        self.gradient = None
+        self.activations=None
+        self.hook_handles=[]
+        self._register_hooks()
+
+    def _register_hooks(self):
+        def forward_hook(output):
+            self.activations=output.detach()
+        def backward_hook(grad_out):
+            self.gradients = grad_out[0].detach()
+        self.hook_handles.append(self.target_layer.register_forward_hook(forward_hook))
+        self.hook_handles.append(self.target_layer.register_backward_hook(backward_hook))
+
+    def __call__(self, input_tensor, batch=False):
+        """
+        Compute Grad-CAM map(s) for the provided input tensor.
+
+        Args:
+            input_tensor (torch.Tensor): Tensor of shape [B, C, L] or [1, C, L].
+            batch (bool): If True, compute Grad-CAM for each sample independently
+                          and return a NumPy array of shape [B, L].
+                          If False, return a NumPy array of shape [L].
+        """
+        if batch:
+            cam_list = []
+            for sample in input_tensor:
+                cam = self._compute_single(sample.unsqueeze(0))
+                cam_list.append(cam)
+            return np.stack(cam_list, axis=0)
+
+        return self._compute_single(input_tensor)
+
+    def _compute_single(self, input_tensor):
+        self.model.eval()
+        device = next(self.model.parameters()).device
+        input_tensor = input_tensor.detach().to(device)
+        input_tensor.requires_grad_(True)
+        self.model.zero_grad()
+        out = self.model(input_tensor)
+        if isinstance(out, (tuple, list)):
+            out = out[0]
+        target = out.squeeze()
+        if target.ndim > 0:
+            target = target.sum()
+        self.model.zero_grad()
+        target.backward(retain_graph=True)
+        gradients = self.gradients         # [B, C, L]
+        activations = self.activations     # [B, C, L]
+        weights = gradients.mean(dim=2, keepdim=True)  # [B, C, 1]
+        grad_cam_map = (weights * activations).sum(dim=1, keepdim=True)  # (B,1,L)
+        grad_cam_map = torch.relu(grad_cam_map)
+        grad_cam_map = torch.nn.functional.interpolate(
+            grad_cam_map, size=input_tensor.shape[2], mode='linear', align_corners=False
+        )
+        grad_cam_map = grad_cam_map.squeeze().cpu().numpy()
+        grad_cam_map = (grad_cam_map - grad_cam_map.min()) / (grad_cam_map.max() - grad_cam_map.min() + 1e-8)
+        return grad_cam_map
+
+    def remove_hooks(self):
+        for handle in self.hook_handles:
+            handle.remove()
 
 def create_trial_output_dir(trial_number: int) -> str:
     """
@@ -206,6 +275,42 @@ def save_trial_results(trial: Trial, cfg: DictConfig, output_dir: str,
     print(f"[OK] Trial {trial.number} results saved to {output_dir}")
 
 
+def preprocess(x: np.ndarray):
+    """
+    preprocess signals for machine learning.
+
+    Flow
+    1. Filter raw signal (i.e. bandpass, wavelet)
+    2. Take amplitude using hilbert transform.
+    3. Filter image (i.e. opencv)
+    4. Take log1p
+
+    Args:
+        x: ndarray (shape: (number of experiment, transducer channel, number of pulse, data length per pulse))
+
+    Return:
+        x: ndarray (same shape as x)
+    """
+    fs = 52083333.842615336
+
+    sos = signal.butter(N=16, Wn=[1e6, 10e6], btype="bandpass",
+                        output="sos", fs=fs)
+    x = signal.sosfiltfilt(sos=sos, x=x, axis=3)
+    print("Filtering raw signal done.")
+    del sos
+    for i in range(x.shape[1]):
+        x[:,i,:,:] = np.abs(signal.hilbert(x[:,i,:,:], axis=2))
+    wall_idx=np.argmax(x>0.5,axis=1)
+    start_idx=np.mean(wall_idx).astype(int)+180
+    print("Hilbert done.")
+    max_values_per_col = np.max(x[:,:,:,250:350], axis=3, keepdims=True)
+    x = x/max_values_per_col
+    del max_values_per_col
+    x = np.log1p(x)
+    x=x[:,start_idx:start_idx+1500]
+    print("Preprocess done.")
+    return x
+
 def objective(trial: Trial, base_config_path: str) -> float:
     """
     Optuna objective function.
@@ -298,6 +403,15 @@ def objective(trial: Trial, base_config_path: str) -> float:
             x = x[:, :, ::cfg.dataset.downsample_factor, :]
             print(f"[INFO] Downsampled H: {h0} -> {x.shape[2]} (factor={cfg.dataset.downsample_factor})")
         
+        # Preprocess
+        x = preprocess(x)
+        print(f"x.shape: {x.shape}")
+        print(f"x.min: {np.min(x)}")
+        print(f"x.max: {np.max(x)}")
+
+        x=x[:,0,:,:]
+        x=x[:,np.newaxis,:,:]
+
         # Create dataset
         print("[STEP] Build dataset tensors...")
         dataset = to_tensor_dataset(x, t, cfg.training.device)
@@ -367,7 +481,7 @@ def objective(trial: Trial, base_config_path: str) -> float:
             lr=cfg.training.learning_rate,
             weight_decay=cfg.training.weight_decay
         )
-        
+
         # 6. Training with pruning support
         print("[STEP] Training...")
         train_losses = []
