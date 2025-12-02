@@ -34,7 +34,7 @@ def _load_np_any(path: str, prefer_key: str = None):
 def main():
     """Main function."""
     # Load config
-    config_path = "config/config_real_updated.yaml"
+    config_path = "config/config_dataset_creation.yaml"
     if not os.path.exists(config_path):
         print(f"[ERROR] Config file not found: {config_path}")
         sys.exit(1)
@@ -43,8 +43,8 @@ def main():
     cfg = OmegaConf.load(config_path)
     
     # Get dataset paths
-    x_path = cfg.dataset.x_train
-    t_path = cfg.dataset.t_train
+    x_path = cfg.dataset.x_path
+    t_path = cfg.dataset.t_path
     x_key = cfg.dataset.get('x_key', None)
     t_key = cfg.dataset.get('t_key', None)
     

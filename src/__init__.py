@@ -15,7 +15,7 @@ if _utils_py_path.exists():
     spec = importlib.util.spec_from_file_location("src.utils_module", _utils_py_path)
     utils_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(utils_module)
-    
+    npz2png = utils_module.npz2png
     preprocess_and_predict = utils_module.preprocess_and_predict
     preprocess = utils_module.preprocess
     hilbert_cuda = utils_module.hilbert_cuda
@@ -27,8 +27,10 @@ else:
 __version__ = "0.1.0"
 
 __all__ = [
+    'npz2png',
     'preprocess_and_predict',
     'preprocess',
     'debug_pipeline',
     'get_valid_data',
+    'npz2png'
 ]
