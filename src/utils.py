@@ -132,7 +132,7 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
     from scipy import signal
     x_tmp = x_test.copy()
     x_tmp_for_fft = x_test.copy()
-    import pywt
+    # import pywt
 
     # x_tmp = x_tmp - np.mean(x_tmp, axis=1)[:,np.newaxis]
     # def maddest(d, axis=None):
@@ -148,6 +148,8 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
     #     coeff[1:] = (pywt.threshold(i, value=uthresh, mode='hard') for i in coeff[1:])
     #     return pywt.waverec(coeff, wavelet, mode='per',axis=1)
     # x_test_filterd = denoise(x_tmp)
+
+    x_tmp = x_tmp[:,208:2708]
 
     x_test_filterd=filter_signal(filter_freq, x_tmp, fs)
     x_test = x_test_filterd.copy()
@@ -168,9 +170,9 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
     argmax_pipe_ref2 = np.argmax(x_test[1000,:])
     # x_test = x_test[:,argmax_pipe_ref2-170:argmax_pipe_ref2+2330]
     # raw_tmp = raw_tmp[:,argmax_pipe_ref2-170:argmax_pipe_ref2+2330]
-    x_test = x_test[:,208:2708]
-    raw_tmp = raw_tmp[:,208:2708]
-    print(f'argmax {argmax_pipe_ref2}')
+    # x_test = x_test[:,208:2708]
+    # raw_tmp = raw_tmp[:,208:2708]
+    # print(f'argmax {argmax_pipe_ref2}')
     pulse_num = x_test.shape[0]
     x_test_tensor = torch.from_numpy(x_test).float()
 
@@ -338,10 +340,10 @@ def  rolling_window_signal(rolling_window, window_size=30, x_test=None):
     if rolling_window:
         s =pl.from_numpy(np.transpose(x_test))
 
-        # s = s.select(pl.all().rolling_mean(
-        #     window_size=window_size//3,
-        #     min_periods=1
-        # ))
+        s = s.select(pl.all().rolling_mean(
+            window_size=window_size//3,
+            min_periods=1
+        ))
         s = s.select(pl.all().rolling_min(
             window_size=window_size,
             min_periods=1
