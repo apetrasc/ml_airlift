@@ -3,9 +3,57 @@
 author : Sadanori Matsubara 
 date: 2025/09/04
 
-## dataset
- we use numerical simulation for creating training dataset while experiment for test dataset. the `train.py` uses simulatiuon dataset for training and `eval.py` does experiment dataset for evaluating.  
-  Please note that while training and evaluating, we use different gpus. such setting have been written in `config/config.yaml`
+## Dataset
+
+### データセットの概要
+
+このプロジェクトでは、数値シミュレーションで作成したデータを訓練データセットとして使用し、実験データをテストデータセットとして使用します。`train.py`はシミュレーションデータで訓練を行い、`eval.py`は実験データで評価を行います。
+
+訓練と評価では異なるGPUを使用するため、`config/config.yaml`で設定を確認してください。
+
+### データセットの構築
+
+#### 1. データセットの準備
+
+元のデータセットファイル（`x_train.npy`と`t_train.npy`）を準備します。データセットは機密情報のため、必要に応じて連絡してください。
+
+#### 2. チャネル除外データセットの作成
+
+訓練では、Channel 1とChannel 3を除外したデータセットを使用します。以下のスクリプトでデータセットを構築できます：
+
+```bash
+# Channel 1とChannel 3を除外したデータセットを作成
+python create_dropped_dataset.py
+```
+
+このスクリプトは以下の処理を行います：
+- 元のデータセット（4チャネル）を読み込み
+- Channel 1とChannel 3を除外（Channel 0と2のみを保持）
+- 処理済みデータセットを`dropped_data`ディレクトリに保存
+
+**設定ファイル**: `config/config_dataset_creation.yaml`で入力パスと出力パスを指定します。
+
+**出力ファイル**:
+- `x_train_dropped.npy`: Channel 1と3を除外した入力データ（2チャネル）
+- `t_train_dropped.npy`: ターゲットデータ（変更なし）
+
+#### 3. データセットの検証
+
+データセットを構築した後、以下のスクリプトでデータセットを検証できます：
+
+```bash
+# データセットの統計情報と整合性を確認
+python validate_dataset.py
+```
+
+このスクリプトは以下のチェックを行います：
+- NaN値やInf値の検出
+- データ形状の確認
+- 各チャネルの統計情報（平均、標準偏差、パーセンタイルなど）
+- サンプル数の整合性確認
+- 極端な値の検出
+
+検証結果を確認し、問題がないことを確認してから訓練を開始してください。
 
 ## ハイパーパラメータ最適化（Optuna）
 
