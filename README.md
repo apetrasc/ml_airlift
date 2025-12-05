@@ -7,51 +7,46 @@ date: 2025/09/04
  we use numerical simulation for creating training dataset while experiment for test dataset. the `train.py` uses simulatiuon dataset for training and `eval.py` does experiment dataset for evaluating.  
   Please note that while training and evaluating, we use different gpus. such setting have been written in `config/config.yaml`
 
-## MLflow統合による研究効率化
+## ハイパーパラメータ最適化（Optuna）
 
-`train_real.py`と`eval_real.py`にMLflowを統合し、実験の自動追跡・管理・比較が可能になりました。
+このプロジェクトでは、Optunaを使用したハイパーパラメータ最適化をサポートしています。
 
 ### 基本的な使用方法
 
-#### 学習（MLflow統合）
+#### ハイパーパラメータ最適化の実行
 ```bash
-# MLflow有効で学習
-python train_real.py --use_mlflow --epochs 20 --batch 4 --limit 0
+# Optunaを使用したハイパーパラメータ最適化
+python scripts/optimize.py
 
-# 実験名とランネームを指定
-python train_real.py --use_mlflow --experiment_name "cnn_experiments" --run_name "baseline_model"
-
-# タグを追加
-python train_real.py --use_mlflow --tags "model_type=baseline" "data_size=full" "optimizer=adam"
+# または、チュートリアル用スクリプト
+python optuna_tutorial.py
 ```
 
-#### 評価（MLflow統合）
+#### 訓練の実行
 ```bash
-# MLflow有効で評価
-python eval_real.py --use_mlflow --datetime "2025-10-29/11-39-35" --create_plots
+# 実データで訓練（Hydra設定を使用）
+python train_real.py
 
-# 最良モデルを自動選択して評価
-python eval_real.py --use_mlflow --best_model --training_experiment "cnn_real_data" --create_plots
-
-# 特定のMLflow run IDで評価
-python eval_real.py --use_mlflow --mlflow_run_id "abc123def456" --create_plots
+# シミュレーションデータで訓練
+python train.py
 ```
 
-#### MLflow UIの起動
+#### 評価の実行
 ```bash
-# MLflow UIを起動
-mlflow ui --backend-store-uri file:/home/smatsubara/documents/airlift/data/outputs_real/mlruns
-# ブラウザで http://localhost:5000 にアクセス
+# 特定の日時ディレクトリで評価
+python eval_real.py --datetime "2025-11-19/20-47-05" --create_plots
+
+# 最良モデル（optuna_best）で評価
+python eval_real.py --datetime optuna_best --create_plots
 ```
 
 ### 主な機能
-- **実験の自動追跡**: ハイパーパラメータ、メトリクス、モデルの自動記録
-- **実験結果の比較**: 複数実験を一覧で比較
-- **最良モデルの自動選択**: メトリクスに基づく自動選択
-- **再現性の確保**: 完全な実験記録で再現可能
-- **チーム協力**: 実験結果の共有が容易
+- **Optunaによる自動最適化**: TPE（Tree-structured Parzen Estimator）を使用した効率的なハイパーパラメータ探索
+- **Pruning（枝刈り）**: 有望でないトライアルを早期終了して計算リソースを節約
+- **結果の永続化**: SQLiteデータベースに結果を保存し、中断後も再開可能
+- **最良トライアルの自動選択**: 検証損失が最小のトライアルを自動的に特定
 
-詳細は `README_complete_workflow.md` を参照してください。 
+詳細は `documents/OPTUNA_TUTORIAL.md` を参照してください。 
 
 ## Installation
 
