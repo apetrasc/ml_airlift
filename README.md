@@ -3,6 +3,58 @@
 author : Sadanori Matsubara 
 date: 2025/09/04
 
+## インストール
+
+### 1. 仮想環境の作成
+
+**Linuxの場合:**  
+ターミナルで以下のコマンドを実行してください：
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install torch torchvision
+```
+
+**Windowsの場合:**  
+コマンドプロンプトを開いて、以下のコマンドを実行してください：
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+pip install torch torchvision
+```
+
+> **注意:**  
+> `pip install torch torchvision`コマンドは、標準的な環境（Ubuntu + CUDA 12.8）向けです。  
+> 異なるOSやCUDAバージョンを使用している場合は、公式の[PyTorchインストールガイド](https://pytorch.org/get-started/locally/)を参照して、環境に適したバージョンをインストールしてください。
+
+これにより、Python仮想環境がセットアップされ、PyTorchを含むすべての必要な依存関係がインストールされます。
+
+### 2. データセットのダウンロード
+
+データセットをzipファイルとして準備し、設定ファイルまたはコードで指定された適切なディレクトリに展開してください。データセット全体は機密情報のため、必要に応じて連絡してください。
+
+データセットを準備した後、`config/config.yaml`を編集してデータセットの場所を指定してください。Linuxでは直接パスをコピー&ペーストできますが、Windowsではペースト時に""を削除する必要があります。
+
+### 3. 推論の実行
+
+- データセット全体に対して推論を実行するには、`eval.py`を使用してください：
+  ```bash
+  python eval.py --datetime models/layernorm
+  ```
+  このスクリプトは、訓練済みモデルを使用してデータセット全体を処理します。
+
+- 単一のデータセットファイルに対して推論を実行するには、`eval_tutorial.py`を使用してください：
+  `eval_tutorial.py`の`file_path`変数をデータファイルを指すように編集し、スクリプトを実行してください：
+  ```bash
+  python eval_tutorial.py
+  ```
+  
+  両方のスクリプトは同じ推論関数を使用します。主な違いは、`eval.py`がバッチで全データを処理するのに対し、`eval_tutorial.py`は単一ファイルのテストやチュートリアル目的で使用されることです。
+
+依存関係やデータセットパスに関する問題が発生した場合は、設定ファイル（例：`config/config.yaml`）を確認し、すべてのパスが正しく設定されていることを確認してください。
+
 ## Dataset
 
 ### データセットの概要
@@ -94,50 +146,5 @@ python eval_real.py --datetime optuna_best --create_plots
 - **結果の永続化**: SQLiteデータベースに結果を保存し、中断後も再開可能
 - **最良トライアルの自動選択**: 検証損失が最小のトライアルを自動的に特定
 
-詳細は `documents/OPTUNA_TUTORIAL.md` を参照してください。 
-
-## Installation
-
-1. **Create a virtual environment for inference**  
-
-   **For Linux:**  
-   Run the following commands in your terminal:
-   ```
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   pip install torch torchvision
-   ```
-   **For Windows:**  
-   Open Command Prompt and run:
-   ```
-   python -m venv .venv
-   .venv\Scripts\activate
-   pip install -r requirements.txt
-   pip install torch torchvision
-   ```
-   > **Note:**  
-   > The command `pip install torch torchvision` is for the ordinally environment (Ubuntu + CUDA 12.8).  
-   > If you are using a different OS or CUDA version, please refer to the official [PyTorch installation guide](https://pytorch.org/get-started/locally/) and install the appropriate version for your environment.
-   This will set up a Python virtual environment and install all required dependencies, including PyTorch.
-
-2. **Download the dataset**  
-   Prepare the dataset as a zip file and extract it into the appropriate directory as specified in your configuration or code. Whole dataset is confidential so contact me.  
-   After you prepared dataset, you should edit `config/config.yaml` and the location of dataset.in Linux, you can directly copy & paste path but in Windows, you must delete "" when pasting.
-
-
-3. **Run inference**  
-   - To perform inference on the entire dataset, use `eval.py`.  
-     ```
-     python eval.py --datetime models/layernorm
-     ```
-     This script will process the whole dataset using the trained model.
-   - To run inference on a single dataset file, use `eval_tutorial.py`.  
-     Edit the `file_path` variable in `eval_tutorial.py` to point to your data file, then execute the script:
-     ```
-     python eval_tutorial.py
-     ```
-   Both scripts use the same inference function; the main difference is that `eval.py` processes all data in batch, while `eval_tutorial.py` is intended for testing on a single file or for tutorial purposes.
-
-If you encounter any issues with dependencies or dataset paths, please check your configuration files (e.g., `config/config.yaml`) and ensure all paths are set correctly.
+詳細は `documents/OPTUNA_TUTORIAL.md` を参照してください。
 
