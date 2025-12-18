@@ -13,7 +13,7 @@ training:
   device: cuda:1
   pretrained_path : models/layernorm/weights/model.pth
 evaluation:
-  target_variables_path: /home/smatsubara/documents/airlift/data/experiments/target_valiables.csv
+  target_variables_path: /mnt/matsubara/signals_exp/target_valiables.csv
   processed_dir: /home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid
   save_csv_path: /home/smatsubara/documents/airlift/data/outputs/
   device: cuda:0

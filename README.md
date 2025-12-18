@@ -3,98 +3,148 @@
 author : Sadanori Matsubara 
 date: 2025/09/04
 
-## dataset
- we use numerical simulation for creating training dataset while experiment for test dataset. the `train.py` uses simulatiuon dataset for training and `eval.py` does experiment dataset for evaluating.  
-  Please note that while training and evaluating, we use different gpus. such setting have been written in `config/config.yaml`
+## インストール
 
-## MLflow統合による研究効率化
+### 1. 仮想環境の作成
 
-`train_real.py`と`eval_real.py`にMLflowを統合し、実験の自動追跡・管理・比較が可能になりました。
+**Linuxの場合:**  
+ターミナルで以下のコマンドを実行してください：
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install torch torchvision
+```
+
+**Windowsの場合:**  
+コマンドプロンプトを開いて、以下のコマンドを実行してください：
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+pip install torch torchvision
+```
+
+> **注意:**  
+> `pip install torch torchvision`コマンドは、標準的な環境（Ubuntu + CUDA 12.8）向けです。  
+> 異なるOSやCUDAバージョンを使用している場合は、公式の[PyTorchインストールガイド](https://pytorch.org/get-started/locally/)を参照して、環境に適したバージョンをインストールしてください。
+
+これにより、Python仮想環境がセットアップされ、PyTorchを含むすべての必要な依存関係がインストールされます。
+
+### 2. データセットのダウンロード
+
+データセットをzipファイルとして準備し、設定ファイルまたはコードで指定された適切なディレクトリに展開してください。データセット全体は機密情報のため、必要に応じて連絡してください。
+
+データセットを準備した後、`config/config.yaml`を編集してデータセットの場所を指定してください。Linuxでは直接パスをコピー&ペーストできますが、Windowsではペースト時に""を削除する必要があります。
+
+### 3. 推論の実行
+
+- データセット全体に対して推論を実行するには、`eval.py`を使用してください：
+  ```bash
+  python eval.py --datetime models/layernorm
+  ```
+  このスクリプトは、訓練済みモデルを使用してデータセット全体を処理します。
+
+- 単一のデータセットファイルに対して推論を実行するには、`eval_tutorial.py`を使用してください：
+  `eval_tutorial.py`の`file_path`変数をデータファイルを指すように編集し、スクリプトを実行してください：
+  ```bash
+  python eval_tutorial.py
+  ```
+  
+  両方のスクリプトは同じ推論関数を使用します。主な違いは、`eval.py`がバッチで全データを処理するのに対し、`eval_tutorial.py`は単一ファイルのテストやチュートリアル目的で使用されることです。
+
+依存関係やデータセットパスに関する問題が発生した場合は、設定ファイル（例：`config/config.yaml`）を確認し、すべてのパスが正しく設定されていることを確認してください。
+
+## Dataset
+
+### データセットの概要
+
+このプロジェクトでは、数値シミュレーションで作成したデータを訓練データセットとして使用し、実験データをテストデータセットとして使用します。`train.py`はシミュレーションデータで訓練を行い、`eval.py`は実験データで評価を行います。
+
+訓練と評価では異なるGPUを使用するため、`config/config.yaml`で設定を確認してください。
+
+### データセットの構築
+
+#### 1. データセットの準備
+
+元のデータセットファイル（`x_train.npy`と`t_train.npy`）を準備します。データセットは機密情報のため、必要に応じて連絡してください。
+
+#### 2. チャネル除外データセットの作成
+
+訓練では、Channel 1とChannel 3を除外したデータセットを使用します。以下のスクリプトでデータセットを構築できます：
+
+```bash
+# Channel 1とChannel 3を除外したデータセットを作成
+python create_dropped_dataset.py
+```
+
+このスクリプトは以下の処理を行います：
+- 元のデータセット（4チャネル）を読み込み
+- Channel 1とChannel 3を除外（Channel 0と2のみを保持）
+- 処理済みデータセットを`dropped_data`ディレクトリに保存
+
+**設定ファイル**: `config/config_dataset_creation.yaml`で入力パスと出力パスを指定します。
+
+**出力ファイル**:
+- `x_train_dropped.npy`: Channel 1と3を除外した入力データ（2チャネル）
+- `t_train_dropped.npy`: ターゲットデータ（変更なし）
+
+#### 3. データセットの検証
+
+データセットを構築した後、以下のスクリプトでデータセットを検証できます：
+
+```bash
+# データセットの統計情報と整合性を確認
+python validate_dataset.py
+```
+
+このスクリプトは以下のチェックを行います：
+- NaN値やInf値の検出
+- データ形状の確認
+- 各チャネルの統計情報（平均、標準偏差、パーセンタイルなど）
+- サンプル数の整合性確認
+- 極端な値の検出
+
+検証結果を確認し、問題がないことを確認してから訓練を開始してください。
+
+## ハイパーパラメータ最適化（Optuna）
+
+このプロジェクトでは、Optunaを使用したハイパーパラメータ最適化をサポートしています。
 
 ### 基本的な使用方法
 
-#### 学習（MLflow統合）
+#### ハイパーパラメータ最適化の実行
 ```bash
-# MLflow有効で学習
-python train_real.py --use_mlflow --epochs 20 --batch 4 --limit 0
+# Optunaを使用したハイパーパラメータ最適化
+python scripts/optimize.py
 
-# 実験名とランネームを指定
-python train_real.py --use_mlflow --experiment_name "cnn_experiments" --run_name "baseline_model"
-
-# タグを追加
-python train_real.py --use_mlflow --tags "model_type=baseline" "data_size=full" "optimizer=adam"
+# または、チュートリアル用スクリプト
+python optuna_tutorial.py
 ```
 
-#### 評価（MLflow統合）
+#### 訓練の実行
 ```bash
-# MLflow有効で評価
-python eval_real.py --use_mlflow --datetime "2025-10-29/11-39-35" --create_plots
+# 実データで訓練（Hydra設定を使用）
+python train_real.py
 
-# 最良モデルを自動選択して評価
-python eval_real.py --use_mlflow --best_model --training_experiment "cnn_real_data" --create_plots
-
-# 特定のMLflow run IDで評価
-python eval_real.py --use_mlflow --mlflow_run_id "abc123def456" --create_plots
+# シミュレーションデータで訓練
+python train.py
 ```
 
-#### MLflow UIの起動
+#### 評価の実行
 ```bash
-# MLflow UIを起動
-mlflow ui --backend-store-uri file:/home/smatsubara/documents/airlift/data/outputs_real/mlruns
-# ブラウザで http://localhost:5000 にアクセス
+# 特定の日時ディレクトリで評価
+python eval_real.py --datetime "2025-11-19/20-47-05" --create_plots
+
+# 最良モデル（optuna_best）で評価
+python eval_real.py --datetime optuna_best --create_plots
 ```
 
 ### 主な機能
-- **実験の自動追跡**: ハイパーパラメータ、メトリクス、モデルの自動記録
-- **実験結果の比較**: 複数実験を一覧で比較
-- **最良モデルの自動選択**: メトリクスに基づく自動選択
-- **再現性の確保**: 完全な実験記録で再現可能
-- **チーム協力**: 実験結果の共有が容易
+- **Optunaによる自動最適化**: TPE（Tree-structured Parzen Estimator）を使用した効率的なハイパーパラメータ探索
+- **Pruning（枝刈り）**: 有望でないトライアルを早期終了して計算リソースを節約
+- **結果の永続化**: SQLiteデータベースに結果を保存し、中断後も再開可能
+- **最良トライアルの自動選択**: 検証損失が最小のトライアルを自動的に特定
 
-詳細は `README_complete_workflow.md` を参照してください。 
-
-## Installation
-
-1. **Create a virtual environment for inference**  
-
-   **For Linux:**  
-   Run the following commands in your terminal:
-   ```
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   pip install torch torchvision
-   ```
-   **For Windows:**  
-   Open Command Prompt and run:
-   ```
-   python -m venv .venv
-   .venv\Scripts\activate
-   pip install -r requirements.txt
-   pip install torch torchvision
-   ```
-   > **Note:**  
-   > The command `pip install torch torchvision` is for the ordinally environment (Ubuntu + CUDA 12.8).  
-   > If you are using a different OS or CUDA version, please refer to the official [PyTorch installation guide](https://pytorch.org/get-started/locally/) and install the appropriate version for your environment.
-   This will set up a Python virtual environment and install all required dependencies, including PyTorch.
-
-2. **Download the dataset**  
-   Prepare the dataset as a zip file and extract it into the appropriate directory as specified in your configuration or code. Whole dataset is confidential so contact me.  
-   After you prepared dataset, you should edit `config/config.yaml` and the location of dataset.in Linux, you can directly copy & paste path but in Windows, you must delete "" when pasting.
-
-
-3. **Run inference**  
-   - To perform inference on the entire dataset, use `eval.py`.  
-     ```
-     python eval.py --datetime models/layernorm
-     ```
-     This script will process the whole dataset using the trained model.
-   - To run inference on a single dataset file, use `eval_tutorial.py`.  
-     Edit the `file_path` variable in `eval_tutorial.py` to point to your data file, then execute the script:
-     ```
-     python eval_tutorial.py
-     ```
-   Both scripts use the same inference function; the main difference is that `eval.py` processes all data in batch, while `eval_tutorial.py` is intended for testing on a single file or for tutorial purposes.
-
-If you encounter any issues with dependencies or dataset paths, please check your configuration files (e.g., `config/config.yaml`) and ensure all paths are set correctly.
+詳細は `documents/OPTUNA_TUTORIAL.md` を参照してください。
 
