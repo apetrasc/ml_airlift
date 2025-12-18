@@ -111,11 +111,12 @@ def preprocess_and_predict(path, model, device, plot_index=80):
 
     # Load and preprocess data
     x_raw = np.load(path)["processed_data"][:,:,0]
+    fs = np.load(path)["fs"]
     
     import os
     filename = os.path.basename(path)
     print(f"loading successful and processing {filename}..")
-    x_test_tensor_cnn = preprocess(x_raw, device)
+    x_test_tensor_cnn = preprocess(x_raw, device, fs)
     # Model prediction
     model.eval()
     with torch.no_grad():

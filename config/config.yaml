@@ -7,21 +7,21 @@ hyperparameters:
   l1_lambda: 1.0e-7
   l2_lambda: 1.0e-7
 dataset:
-  x_train: /mnt/matsubara/signals_sim/master/x_train.npy
-  t_train: /mnt/matsubara/signals_sim/master/t_train.npy
+  x_train: /mnt/sdb/matsubara/airlift/dataset/x_train.npy
+  t_train: /mnt/sdb/matsubara/airlift/dataset/t_train.npy
 training:
   device: cuda:1
   pretrained_path : models/layernorm/weights/model.pth
 evaluation:
-  target_variables_path: /mnt/matsubara/signals_exp/target_valiables.csv
-  processed_dir: /home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid
-  save_csv_path: /home/smatsubara/documents/airlift/data/outputs/
+  target_variables_path: /mnt/sdb/yyamaguchi/psdata2matlab/experiments/target_valiables.csv
+  processed_dir: /mnt/sdb/matsubara/airlift/eval/solid_liquid
+  save_csv_path: /mnt/sdb/yyamaguchi/psdata2matlab/outputs
   device: cuda:0
   tmp_path: /home/smatsubara/documents/airlift/data/tmp
   results_path: /home/smatsubara/documents/airlift/data/results
 
 hydra:
   run:
-    dir: /mnt/matsubara/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: /mnt/sdb/yyamaguchi/psdata2matlab/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
   job:
     chdir: false
