@@ -1,6 +1,7 @@
 import numpy as np
 import torch
-import scipy.signal as signal
+from scipy.signal import hilbert
+from scipy import signal
 import matplotlib.pyplot as plt
 import yaml
 import os
@@ -30,7 +31,7 @@ def preprocess(x_raw, device, fs=None):
 
     x_test = np.abs(signal.hilbert(x_raw,axis=1))
 
-    x_test = erode_signals(x_test, window_size=30)
+    #x_test = erode_signals(x_test, window_size=30)
     
     if np.isnan(x_test).any():
         print("nan")
@@ -128,7 +129,7 @@ def preprocess_and_predict(path, model, device, plot_index=80):
         torch.cuda.empty_cache()
     return mean, var
 
-def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=None, full=True, pulse_index=0):    
+def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=5.0, full=True, pulse_index=0,vmin=0,vmax=1):    
     """
     Convert processed .npz signal data to PNG image.
     
@@ -173,16 +174,20 @@ def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=None
         else:
             raise ValueError("processed_data shape is not supported.")
         
-        # Determine the time axis range
         n_samples = img_data.shape[1]
+        n_samples = int(n_samples)
         t = np.arange(n_samples) / fs
-        if end_time is None:
-            end_time = t[-1]
         start_idx = int(start_time * fs)
         end_idx = int(end_time * fs)
         if end_idx > n_samples:
             end_idx = n_samples
-        img_data = img_data[:, start_idx:end_idx]
+        h,w = img_data.shape
+        print(f"h: {h}, w: {w}")
+        interval = 1/3*1e-3
+        total_time = 15000*interval
+        endid = int(h *end_time/total_time)
+        print(f"endid: {endid}")
+        img_data = img_data[:endid, start_idx:end_idx]
         # Apply Hilbert transform to each pulse in img_data along the time axis
         # The analytic signal is computed for each pulse (row) individually
         # ヒルベルト変換をtorchで実装する
@@ -206,13 +211,14 @@ def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=None
         img_data = hilbert_cuda(img_data_torch, device)
         #print(img_data.shape)
         t = t[start_idx:end_idx]
+        #print(f"end_idx: {end_idx}, start_idx: {start_idx}")
         #print(t.shape)
         #print(np.max(img_data),np.min(img_data))
+        print(f"img_data.shape: {img_data.shape}")
         
-        
-        plt.figure(figsize=(10, 4))
+        plt.figure(figsize=(10, 100))
         #plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0]*1e6, t[-1]*1e6, img_data.shape[0]-0.5, -0.5],vmin=0,vmax=1)
-        plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0]*1e6, t[-1]*1e6, img_data.shape[0]-0.5, -0.5])
+        plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0]*1e6, t[-1]*1e6, img_data.shape[0]-0.5, -0.5],vmin=vmin,vmax=vmax)
         #plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0], t[-1], img_data.shape[0]-0.5, -0.5])
         plt.colorbar(label='Amplitude')
         plt.xlabel('Time (μs)')
@@ -318,11 +324,6 @@ def get_valid_data(x, y, yerr):
 def erode_signals(x, window_size=30):
     import polars as pl
     s=pl.from_numpy(np.transpose(x))
-
-    s = s.select(pl.all().rolling_mean(
-        window_size=window_size//3,
-        min_periods=1
-    ))
 
     s = s.select(pl.all().rolling_min(
         window_size=window_size,

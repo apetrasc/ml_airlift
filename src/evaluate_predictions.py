@@ -105,8 +105,8 @@ def create_individual_plots(y_pred: np.ndarray, y_true: np.ndarray,
         ax.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Perfect Prediction')
         
         # Set labels and title
-        ax.set_xlabel('Ground Truth', fontsize=12)
-        ax.set_ylabel('Predicted Value', fontsize=12)
+        ax.set_xlabel('Ground Truth', fontsize=16)
+        ax.set_ylabel('Predicted Value', fontsize=16)
         ax.set_title(f'{target_names[i]} - Prediction vs Ground Truth\n'
                     f'R² = {metric["r2"]:.4f}, RMSE = {metric["rmse"]:.4f}, MAE = {metric["mae"]:.4f}',
                     fontsize=12)

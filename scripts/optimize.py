@@ -91,7 +91,7 @@ def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
     
     # Data hyperparameters
     # cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 1, 4)
-    cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 2, 5)
+    cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 1, 4)
     
     # Limit epochs for faster optimization (can be adddddjusted)
     cfg.training.epochs = trial.suggest_int('training.epochs', 50, 200, step=50)
@@ -404,13 +404,13 @@ def objective(trial: Trial, base_config_path: str) -> float:
             print(f"[INFO] Downsampled H: {h0} -> {x.shape[2]} (factor={cfg.dataset.downsample_factor})")
         
         # Preprocess
-        x = preprocess(x)
+        # x = preprocess(x)
         print(f"x.shape: {x.shape}")
         print(f"x.min: {np.min(x)}")
         print(f"x.max: {np.max(x)}")
 
-        x=x[:,0,:,:]
-        x=x[:,np.newaxis,:,:]
+        # x=x[:,0,:,:]
+        # x=x[:,np.newaxis,:,:]
 
         # Create dataset
         print("[STEP] Build dataset tensors...")
@@ -657,6 +657,32 @@ def generate_study_summary(study: optuna.Study, output_dir: str):
     print(f"[OK] Study summary saved to {summary_path}")
 
 
+def generate_study_name(base_config_path: str) -> str:
+    """
+    Generate study name based on configuration to avoid mixing different experimental settings.
+    
+    Args:
+        base_config_path: Path to base configuration file
+    
+    Returns:
+        Study name string
+    """
+    cfg = OmegaConf.load(base_config_path)
+    
+    # Extract key settings that affect results
+    in_channels = cfg.model.get('in_channels', 4)
+    dataset_path = cfg.dataset.get('x_train', '')
+    
+    # Create a hash from dataset path to distinguish different datasets
+    import hashlib
+    dataset_hash = hashlib.md5(dataset_path.encode()).hexdigest()[:8]
+    
+    # Generate study name based on key settings
+    study_name = f'cnn_opt_c{in_channels}_{dataset_hash}'
+    
+    return study_name
+
+
 def main():
     """
     Main function to run Optuna optimization.
@@ -671,9 +697,11 @@ def main():
         engine_kwargs={'pool_size': 20}
     )
     
-    # Create or load study
-    # Use new study name to avoid compatibility issues with changed hyperparameter spaces
-    study_name = 'cnn_hyperparameter_optimization_v2'  # Changed to v2 for new batch_size range
+    # Generate study name based on configuration
+    # This ensures different experimental settings use different studies
+    study_name = generate_study_name(BASE_CONFIG_PATH)
+    print(f"[INFO] Generated study name: {study_name}")
+    print(f"[INFO] This ensures different settings (channels, dataset, etc.) use separate studies")
     try:
         study = optuna.create_study(
             study_name=study_name,
@@ -686,7 +714,12 @@ def main():
                 interval_steps=1          # Check every epoch
             )
         )
+        n_existing = len(study.trials)
         print(f"[INFO] Loaded existing study: {study_name}")
+        print(f"[INFO] Found {n_existing} existing trial(s)")
+        if n_existing > 0:
+            print(f"[WARN] Continuing optimization with existing trials.")
+            print(f"[WARN] Make sure the configuration (channels, dataset, etc.) matches previous runs!")
     except Exception as e:
         print(f"[INFO] Creating new study: {study_name}")
         study = optuna.create_study(

@@ -1,4 +1,4 @@
-from src import preprocess_and_predict, preprocess
+from src import preprocess_and_predict, preprocess, npz2png
 from models import SimpleCNN, SimpleViTRegressor, ResidualCNN
 import torch
 import numpy as np
@@ -12,8 +12,8 @@ from tqdm import tqdm
 with open('config/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
 
-base_dir = "/mnt/matsubara/pictures"
-file_path = "/mnt/matsubara/signals_exp/processed_data/all/P20241004-1621_processed.npz"
+base_dir = "/home/smatsubara/documents/airlift/data/sandbox/visualize"
+file_path = "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20241007-1112_processed.npz"
 device = config["evaluation"]["device"]
 
 parser = argparse.ArgumentParser(description="Run evaluation with specified base directory (datetime).")
@@ -372,3 +372,4 @@ plt.savefig(os.path.join(gradcam_output_dir, f'gradcam_{sample_index}.png'))
 plt.close()
 
 mean, var = preprocess_and_predict(file_path, model, device=config['evaluation']['device'])
+npz2png(file_path, gradcam_output_dir,vmin=0,vmax=0.05)
