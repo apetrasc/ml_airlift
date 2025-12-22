@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Create dataset with Channel 3 excluded and save to dropped_data directory.
-Loads x_train and t_train, excludes Channel 3 from X, and saves as new files.
+Create dataset with selected channels and save to output directory.
+Loads x_train and t_train, selects specified channels from X based on config,
+and saves as new files.
 """
 
 import os
@@ -48,8 +49,17 @@ def main():
     x_key = cfg.dataset.get('x_key', None)
     t_key = cfg.dataset.get('t_key', None)
     
+    # Get channel selection
+    channels_to_keep = cfg.channel_selection.get('channels', [0, 2])
+    if isinstance(channels_to_keep, str):
+        # Handle string format like "0,1" or "0, 1"
+        channels_to_keep = [int(c.strip()) for c in channels_to_keep.split(',')]
+    elif not isinstance(channels_to_keep, list):
+        channels_to_keep = [channels_to_keep]
+    
     print(f"\n[INFO] X dataset path: {x_path}")
     print(f"[INFO] T dataset path: {t_path}")
+    print(f"[INFO] Channels to keep: {channels_to_keep}")
     
     # Load data
     print(f"\n[STEP] Loading datasets...")
@@ -72,20 +82,40 @@ def main():
         print(f"[ERROR] Sample count mismatch: X={x.shape[0]}, T={t.shape[0]}")
         sys.exit(1)
     
-    # Exclude Channel 1 and Channel 3
-    print(f"\n[STEP] Excluding Channel 1 and Channel 3...")
-    if x.ndim == 4 and x.shape[1] == 4:
-        print(f"[INFO] Original X shape: {x.shape}")
-        x_dropped = x[:, [0, 2], :, :]  # Keep only channels 0, 2
-        print(f"[OK] Excluded Channel 1 and 3. New shape: {x_dropped.shape}")
-        print(f"[INFO] Kept channels: 0, 2")
-    elif x.ndim == 3 and x.shape[1] == 4:
-        print(f"[INFO] Original X shape: {x.shape}")
-        x_dropped = x[:, [0, 2], :]  # Keep only channels 0, 2
-        print(f"[OK] Excluded Channel 1 and 3. New shape: {x_dropped.shape}")
-        print(f"[INFO] Kept channels: 0, 2")
+    # Validate channel selection
+    num_channels = x.shape[1]
+    if not all(0 <= ch < num_channels for ch in channels_to_keep):
+        print(f"[ERROR] Invalid channel indices: {channels_to_keep}")
+        print(f"       Valid channel range: 0 to {num_channels - 1}")
+        sys.exit(1)
+    
+    if len(channels_to_keep) == 0:
+        print(f"[ERROR] At least one channel must be selected")
+        sys.exit(1)
+    
+    if len(set(channels_to_keep)) != len(channels_to_keep):
+        print(f"[WARNING] Duplicate channel indices found: {channels_to_keep}")
+        channels_to_keep = sorted(list(set(channels_to_keep)))
+        print(f"[INFO] Using unique channels: {channels_to_keep}")
+    
+    # Select channels based on configuration
+    excluded_channels = [i for i in range(num_channels) if i not in channels_to_keep]
+    print(f"\n[STEP] Selecting channels...")
+    print(f"[INFO] Original X shape: {x.shape}")
+    print(f"[INFO] Channels to keep: {channels_to_keep}")
+    if excluded_channels:
+        print(f"[INFO] Channels to exclude: {excluded_channels}")
+    
+    if x.ndim == 4:
+        x_dropped = x[:, channels_to_keep, :, :]
+        print(f"[OK] Selected channels. New shape: {x_dropped.shape}")
+        print(f"[INFO] Kept channels: {channels_to_keep}")
+    elif x.ndim == 3:
+        x_dropped = x[:, channels_to_keep, :]
+        print(f"[OK] Selected channels. New shape: {x_dropped.shape}")
+        print(f"[INFO] Kept channels: {channels_to_keep}")
     else:
-        print(f"[ERROR] Unexpected X shape: {x.shape}. Expected (N, 4, H, W) or (N, 4, L)")
+        print(f"[ERROR] Unexpected X shape: {x.shape}. Expected (N, C, H, W) or (N, C, L)")
         sys.exit(1)
     
     # Create output directory
@@ -95,7 +125,8 @@ def main():
     
     # Save X dataset
     x_output_path = os.path.join(output_dir, "x_train_dropped.npy")
-    print(f"\n[STEP] Saving X dataset (Channel 1 and 3 excluded)...")
+    excluded_channels_str = ", ".join(map(str, excluded_channels)) if excluded_channels else "none"
+    print(f"\n[STEP] Saving X dataset (channels {excluded_channels_str} excluded)...")
     try:
         np.save(x_output_path, x_dropped)
         print(f"[OK] Saved X dataset to: {x_output_path}")
@@ -142,14 +173,18 @@ def main():
     print(f"\n{'='*70}")
     print("SUMMARY")
     print(f"{'='*70}")
-    print(f"[SUCCESS] Dataset with Channel 1 and Channel 3 excluded created successfully!")
+    excluded_channels_str = ", ".join(map(str, excluded_channels)) if excluded_channels else "none"
+    kept_channels_str = ", ".join(map(str, channels_to_keep))
+    print(f"[SUCCESS] Dataset with channel selection completed successfully!")
     print(f"\nOutput files:")
     print(f"  X: {x_output_path}")
     print(f"  T: {t_output_path}")
     print(f"\nOriginal X shape: {x.shape}")
-    print(f"Dropped X shape:  {x_dropped.shape}")
+    print(f"Selected X shape:  {x_dropped.shape}")
     print(f"T shape:          {t.shape}")
-    print(f"\nChannel 1 and Channel 3 have been excluded. Dataset now contains 2 channels (0, 2).")
+    print(f"\nChannels kept: {kept_channels_str}")
+    if excluded_channels:
+        print(f"Channels excluded: {excluded_channels_str}")
     print(f"{'='*70}\n")
 
 

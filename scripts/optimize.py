@@ -11,6 +11,49 @@ import datetime
 import json
 import shutil
 import numpy as np
+
+# Tee class to output to both stdout and file
+class Tee:
+    """Class to write to both stdout and a file."""
+    def __init__(self, file_path):
+        self.file = open(file_path, 'w', encoding='utf-8')
+        self.stdout = sys.stdout
+        sys.stdout = self
+    
+    def write(self, data):
+        self.stdout.write(data)
+        self.file.write(data)
+        self.file.flush()
+    
+    def flush(self):
+        self.stdout.flush()
+        self.file.flush()
+    
+    def close(self):
+        if self.file:
+            self.file.close()
+        sys.stdout = self.stdout
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+# Try to import psutil for memory monitoring, fallback if not available
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    print("[WARN] psutil not available. CPU memory monitoring will be limited.")
+
+# Set PyTorch CUDA memory allocator configuration to reduce fragmentation
+# This must be set before importing torch
+if 'PYTORCH_CUDA_ALLOC_CONF' not in os.environ:
+    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+    print("[INFO] Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True")
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -49,6 +92,14 @@ except ImportError:
 OPTUNA_DIR = os.path.join(config.output.model_save_dir, 'optuna')
 OUTPUTS_ROOT = os.path.join(config.output.model_save_dir, 'optuna', 'runs')
 BASE_CONFIG_PATH = 'config/config_real.yaml'
+
+# Epoch range configuration
+# Change these values to create a new study for different epoch ranges
+# Previous range: 50-200 (step=50)
+# Current range: 100-300 (step=100)
+EPOCH_MIN = 100  # Minimum epoch value
+EPOCH_MAX = 300  # Maximum epoch value
+EPOCH_STEP = 100  # Step size for epoch values
 
 
 def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
@@ -91,7 +142,15 @@ def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
     cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 1, 4)
     
     # Limit epochs for faster optimization (can be adjusted)
-    cfg.training.epochs = trial.suggest_int('training.epochs', 50, 200, step=50)
+    # IMPORTANT: These values must match EPOCH_MIN, EPOCH_MAX, EPOCH_STEP defined at module level
+    # to ensure the study name correctly reflects the epoch range being used
+    global EPOCH_MIN, EPOCH_MAX, EPOCH_STEP
+    cfg.training.epochs = trial.suggest_int(
+        'training.epochs', 
+        EPOCH_MIN, 
+        EPOCH_MAX, 
+        step=EPOCH_STEP
+    )
     
     return cfg
 
@@ -121,6 +180,416 @@ def create_trial_output_dir(trial_number: int) -> str:
     os.makedirs(weights_dir, exist_ok=True)
     
     return run_dir
+
+
+def _get_actual_gpu_memory_usage():
+    """
+    Get actual GPU memory usage from nvidia-smi or nvidia-ml-py.
+    This shows the real memory usage that matches nvidia-smi output.
+    
+    Returns:
+        dict with actual GPU memory info in MB, or None if not available
+    """
+    if not torch.cuda.is_available():
+        return None
+    
+    try:
+        # Try to use nvidia-ml-py if available
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            
+            # Get process ID
+            import os
+            pid = os.getpid()
+            
+            # Get memory info for this process
+            procs = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
+            for proc in procs:
+                if proc.pid == pid:
+                    return {
+                        'used_mb': proc.usedGpuMemory / 1024**2,
+                        'method': 'pynvml'
+                    }
+            
+            # If process not found in compute processes, try graphics processes
+            procs = pynvml.nvmlDeviceGetGraphicsRunningProcesses(handle)
+            for proc in procs:
+                if proc.pid == pid:
+                    return {
+                        'used_mb': proc.usedGpuMemory / 1024**2,
+                        'method': 'pynvml'
+                    }
+            
+            pynvml.nvmlShutdown()
+        except ImportError:
+            pass
+        
+        # Fallback: try nvidia-smi command
+        import subprocess
+        import os
+        pid = os.getpid()
+        result = subprocess.run(
+            ['nvidia-smi', '--query-compute-apps=pid,used_memory', '--format=csv,noheader,nounits'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    parts = line.split(',')
+                    if len(parts) >= 2 and parts[0].strip() == str(pid):
+                        return {
+                            'used_mb': float(parts[1].strip()),
+                            'method': 'nvidia-smi'
+                        }
+    except Exception as e:
+        # Silently fail and return None
+        pass
+    
+    return None
+
+
+def _get_cpu_memory_info():
+    """
+    Get CPU memory usage information.
+    
+    Returns:
+        dict with memory information in GB
+    """
+    if not PSUTIL_AVAILABLE:
+        return None
+    
+    try:
+        process = psutil.Process(os.getpid())
+        mem_info = process.memory_info()
+        system_mem = psutil.virtual_memory()
+        
+        return {
+            'process_rss_gb': mem_info.rss / 1024**3,  # Resident Set Size (actual physical memory)
+            'process_vms_gb': mem_info.vms / 1024**3,  # Virtual Memory Size
+            'system_total_gb': system_mem.total / 1024**3,
+            'system_available_gb': system_mem.available / 1024**3,
+            'system_used_gb': system_mem.used / 1024**3,
+            'system_percent': system_mem.percent,
+            'process_percent': (mem_info.rss / system_mem.total) * 100
+        }
+    except Exception as e:
+        print(f"[WARN] Failed to get CPU memory info: {e}")
+        return None
+
+
+def _print_memory_status(stage: str = ""):
+    """
+    Print both CPU and GPU memory status.
+    
+    Args:
+        stage: Description of current stage (e.g., "after dataset creation")
+    """
+    print(f"\n{'='*60}")
+    print(f"Memory Status {stage}")
+    print(f"{'='*60}")
+    
+    # CPU memory
+    cpu_mem = _get_cpu_memory_info()
+    if cpu_mem:
+        print(f"[CPU Memory]")
+        print(f"  Process RSS (physical): {cpu_mem['process_rss_gb']:.2f} GB ({cpu_mem['process_percent']:.1f}% of system)")
+        print(f"  Process VMS (virtual):  {cpu_mem['process_vms_gb']:.2f} GB")
+        print(f"  System total:           {cpu_mem['system_total_gb']:.2f} GB")
+        print(f"  System available:       {cpu_mem['system_available_gb']:.2f} GB")
+        print(f"  System used:            {cpu_mem['system_used_gb']:.2f} GB ({cpu_mem['system_percent']:.1f}%)")
+    
+    # GPU memory
+    if torch.cuda.is_available():
+        mem_allocated = torch.cuda.memory_allocated(0) / 1024**3
+        mem_reserved = torch.cuda.memory_reserved(0) / 1024**3
+        mem_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        mem_free = mem_total - mem_reserved
+        
+        # Get actual GPU memory usage (matches nvidia-smi)
+        actual_mem = _get_actual_gpu_memory_usage()
+        
+        print(f"\n[GPU Memory - PyTorch]")
+        print(f"  Total:     {mem_total:.2f} GB")
+        print(f"  Allocated: {mem_allocated:.2f} GB (PyTorch explicit allocation)")
+        print(f"  Reserved:  {mem_reserved:.2f} GB (PyTorch memory pool)")
+        print(f"  Free:      {mem_free:.2f} GB")
+        
+        if actual_mem:
+            actual_gb = actual_mem['used_mb'] / 1024
+            print(f"\n[GPU Memory - Actual (nvidia-smi)]")
+            print(f"  Process usage: {actual_gb:.2f} GB ({actual_mem['used_mb']:.0f} MB)")
+            print(f"  Method: {actual_mem['method']}")
+            if actual_gb > mem_allocated * 1.5:
+                extra = actual_gb - mem_allocated
+                print(f"  Note: Extra {extra:.2f} GB used by cuDNN, CUDA runtime, and other GPU resources")
+    
+    print(f"{'='*60}\n")
+
+
+def _check_dataset_on_cpu(dataset, stage: str = ""):
+    """
+    Verify that dataset tensors are on CPU memory.
+    
+    Args:
+        dataset: Dataset object to check
+        stage: Description of current stage
+    
+    Returns:
+        bool: True if all tensors are on CPU, False otherwise
+    """
+    print(f"\n{'='*60}")
+    print(f"Dataset CPU Memory Check {stage}")
+    print(f"{'='*60}")
+    
+    all_on_cpu = True
+    total_size_mb = 0
+    
+    if hasattr(dataset, 'tensors'):
+        for i, tensor in enumerate(dataset.tensors):
+            device = tensor.device if hasattr(tensor, 'device') else 'unknown'
+            size_mb = tensor.element_size() * tensor.nelement() / 1024**2
+            total_size_mb += size_mb
+            
+            if device.type != 'cpu' if hasattr(device, 'type') else device != 'cpu':
+                print(f"[ERROR] Tensor {i} is on {device}, expected CPU!")
+                all_on_cpu = False
+            else:
+                print(f"[OK] Tensor {i}: {tuple(tensor.shape)}, {tensor.dtype}, on CPU, size: {size_mb:.2f} MB")
+    
+    print(f"[INFO] Total dataset size: {total_size_mb:.2f} MB ({total_size_mb/1024:.2f} GB)")
+    
+    if all_on_cpu:
+        print(f"[OK] All dataset tensors are on CPU memory")
+    else:
+        print(f"[ERROR] Some dataset tensors are not on CPU memory!")
+    
+    print(f"{'='*60}\n")
+    return all_on_cpu
+
+
+def _check_batch_transfer_to_gpu(dataloader, device, batch_size: int):
+    """
+    Test if a batch can be transferred to GPU memory.
+    
+    Args:
+        dataloader: DataLoader object
+        device: Target device (should be GPU)
+        batch_size: Expected batch size
+    
+    Returns:
+        tuple: (success: bool, batch_size_actual: int, error_message: str)
+    """
+    print(f"\n{'='*60}")
+    print(f"GPU Batch Transfer Check")
+    print(f"{'='*60}")
+    
+    if not torch.cuda.is_available() or device.type != 'cuda':
+        print(f"[SKIP] GPU not available or device is not CUDA")
+        return True, 0, "GPU not available"
+    
+    try:
+        # Get initial GPU memory
+        mem_before = torch.cuda.memory_allocated(0) / 1024**3
+        mem_reserved_before = torch.cuda.memory_reserved(0) / 1024**3
+        
+        print(f"[INFO] GPU memory before batch transfer:")
+        print(f"  Allocated: {mem_before:.2f} GB")
+        print(f"  Reserved:  {mem_reserved_before:.2f} GB")
+        
+        # Try to get a batch
+        print(f"[INFO] Attempting to load batch from DataLoader...")
+        batch_iter = iter(dataloader)
+        xb, yb = next(batch_iter)
+        
+        print(f"[OK] Batch loaded from DataLoader")
+        print(f"  X batch shape: {tuple(xb.shape)}, dtype: {xb.dtype}")
+        print(f"  Y batch shape: {tuple(yb.shape)}, dtype: {yb.dtype}")
+        print(f"  Batch size: {xb.shape[0]}")
+        
+        # Check if batch is on CPU
+        if xb.device.type != 'cpu':
+            print(f"[WARN] X batch is already on {xb.device}, expected CPU")
+        else:
+            print(f"[OK] X batch is on CPU")
+        
+        # Calculate batch memory requirement
+        xb_size_mb = xb.element_size() * xb.nelement() / 1024**2
+        yb_size_mb = yb.element_size() * yb.nelement() / 1024**2
+        print(f"[INFO] Batch memory requirement:")
+        print(f"  X batch: {xb_size_mb:.2f} MB")
+        print(f"  Y batch: {yb_size_mb:.2f} MB")
+        print(f"  Total: {(xb_size_mb + yb_size_mb):.2f} MB")
+        
+        # Try to transfer to GPU
+        print(f"[INFO] Attempting to transfer batch to GPU ({device})...")
+        xb_gpu = xb.to(device, non_blocking=False)
+        yb_gpu = yb.to(device, non_blocking=False)
+        
+        print(f"[OK] Batch transferred to GPU successfully")
+        
+        # Check GPU memory after transfer
+        torch.cuda.synchronize()
+        mem_after = torch.cuda.memory_allocated(0) / 1024**3
+        mem_reserved_after = torch.cuda.memory_reserved(0) / 1024**3
+        mem_increase = mem_after - mem_before
+        
+        print(f"[INFO] GPU memory after batch transfer:")
+        print(f"  Allocated: {mem_after:.2f} GB (increased by {mem_increase:.2f} GB)")
+        print(f"  Reserved:  {mem_reserved_after:.2f} GB")
+        
+        # Store batch size before cleanup
+        actual_batch_size = xb.shape[0]
+        
+        # Clean up test batch
+        del xb_gpu, yb_gpu, xb, yb
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        
+        mem_final = torch.cuda.memory_allocated(0) / 1024**3
+        print(f"[INFO] GPU memory after cleanup: {mem_final:.2f} GB")
+        
+        print(f"[OK] Batch transfer test successful!")
+        print(f"{'='*60}\n")
+        return True, actual_batch_size, ""
+        
+    except RuntimeError as e:
+        error_msg = str(e)
+        print(f"[ERROR] Failed to transfer batch to GPU: {error_msg}")
+        if 'out of memory' in error_msg.lower():
+            print(f"[ERROR] GPU out of memory! Batch size {batch_size} may be too large.")
+            print(f"[SOLUTION] Try reducing batch size or using downsample_factor")
+        
+        # Try to clean up variables that might exist
+        try:
+            if 'xb_gpu' in locals():
+                del xb_gpu
+            if 'yb_gpu' in locals():
+                del yb_gpu
+            if 'xb' in locals():
+                del xb
+            if 'yb' in locals():
+                del yb
+        except:
+            pass
+        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
+        print(f"{'='*60}\n")
+        return False, 0, error_msg
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"[ERROR] Unexpected error during batch transfer test: {error_msg}")
+        
+        # Try to clean up variables that might exist
+        try:
+            if 'xb_gpu' in locals():
+                del xb_gpu
+            if 'yb_gpu' in locals():
+                del yb_gpu
+            if 'xb' in locals():
+                del xb
+            if 'yb' in locals():
+                del yb
+        except:
+            pass
+        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
+        print(f"{'='*60}\n")
+        return False, 0, error_msg
+
+
+def _cleanup_trial_memory(model, optimizer, criterion,
+                          train_loader, val_loader, test_loader,
+                          dataset, train_set, val_set, test_set,
+                          x, t, y_pred, y_true):
+    """
+    Comprehensive cleanup of GPU memory after each trial.
+    
+    This function explicitly deletes all objects that may hold GPU memory,
+    forces garbage collection, and clears CUDA cache.
+    """
+    import gc
+    
+    if not torch.cuda.is_available():
+        return
+    
+    # Move model to CPU and delete
+    if model is not None:
+        try:
+            if isinstance(model, nn.DataParallel):
+                model = model.module
+            # Move model to CPU to free GPU memory
+            model = model.cpu()
+            del model
+        except:
+            pass
+    
+    # Delete optimizer and criterion
+    if optimizer is not None:
+        try:
+            del optimizer
+        except:
+            pass
+    
+    if criterion is not None:
+        try:
+            del criterion
+        except:
+            pass
+    
+    # Delete DataLoaders
+    for loader in [train_loader, val_loader, test_loader]:
+        if loader is not None:
+            try:
+                del loader
+            except:
+                pass
+    
+    # Delete datasets
+    for ds in [dataset, train_set, val_set, test_set]:
+        if ds is not None:
+            try:
+                # If it's a TensorDataset, move tensors to CPU before deletion
+                if hasattr(ds, 'tensors'):
+                    for tensor in ds.tensors:
+                        if isinstance(tensor, torch.Tensor) and tensor.is_cuda:
+                            tensor = tensor.cpu()
+                del ds
+            except:
+                pass
+    
+    # Delete data arrays (move to CPU if on GPU)
+    for data in [x, t, y_pred, y_true]:
+        if data is not None:
+            try:
+                if isinstance(data, torch.Tensor):
+                    if data.is_cuda:
+                        data = data.cpu()
+                    del data
+                elif isinstance(data, np.ndarray):
+                    del data
+            except:
+                pass
+    
+    # Force Python garbage collection
+    gc.collect()
+    
+    # Clear CUDA cache
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+    
+    # Additional cleanup: clear all CUDA cache again
+    torch.cuda.empty_cache()
 
 
 def save_trial_results(trial: Trial, cfg: DictConfig, output_dir: str, 
@@ -229,8 +698,13 @@ def objective(trial: Trial, base_config_path: str) -> float:
     """
     # Clear GPU memory before starting trial
     if torch.cuda.is_available():
+        # Force garbage collection first
+        import gc
+        gc.collect()
+        # Clear CUDA cache multiple times to ensure cleanup
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+        torch.cuda.empty_cache()
         # Reset memory stats
         for i in range(torch.cuda.device_count()):
             torch.cuda.reset_peak_memory_stats(i)
@@ -248,9 +722,15 @@ def objective(trial: Trial, base_config_path: str) -> float:
     cfg.run_dir = output_dir
     cfg.trial_number = trial.number
     
+    # Create log file path
+    logs_dir = os.path.join(output_dir, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    log_file_path = os.path.join(logs_dir, "training.log")
+    
     print(f"\n{'='*60}")
     print(f"Trial {trial.number} started")
     print(f"Output directory: {output_dir}")
+    print(f"Log file: {log_file_path}")
     print(f"Hyperparameters: {trial.params}")
     print(f"{'='*60}\n")
     
@@ -260,224 +740,283 @@ def objective(trial: Trial, base_config_path: str) -> float:
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
     
-    try:
-        # 4. Load and preprocess data
-        print("[STEP] Loading dataset files...")
-        x, t = load_npz_pair(
+    # Redirect stdout to both console and log file
+    with Tee(log_file_path):
+        try:
+            # 4. Load and preprocess data
+            print("[STEP] Loading dataset files...")
+            x, t = load_npz_pair(
             cfg.dataset.x_train, 
             cfg.dataset.t_train, 
-            cfg.dataset.x_key, 
-            cfg.dataset.t_key
-        )
-        print(f"[OK] Loaded. x.shape={x.shape}, t.shape={t.shape}")
-        
-        # Exclude Channel 1 and Channel 3 (keep only channels 0, 2)
-        if x.ndim == 4 and x.shape[1] == 4:
-            print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
-            x = x[:, [0, 2], :, :]  # Keep only channels 0, 2
-            print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
-            # Update model config to reflect 2 channels
-            cfg.model.in_channels = 2
-        elif x.ndim == 3 and x.shape[1] == 4:
-            print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
-            x = x[:, [0, 2], :]  # Keep only channels 0, 2
-            print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
-            # Update model config to reflect 2 channels
-            cfg.model.in_channels = 2
-        
-        # Limit samples if specified
-        if cfg.dataset.limit_samples > 0:
-            n = min(cfg.dataset.limit_samples, x.shape[0])
-            x = x[:n]
-            t = t[:n]
-            print(f"[INFO] Limited to first {n} samples")
-        
-        # Optional downsampling
-        if x.ndim == 4 and cfg.dataset.downsample_factor > 1:
-            h0 = x.shape[2]
-            x = x[:, :, ::cfg.dataset.downsample_factor, :]
-            print(f"[INFO] Downsampled H: {h0} -> {x.shape[2]} (factor={cfg.dataset.downsample_factor})")
-        
-        # Create dataset
-        print("[STEP] Build dataset tensors...")
-        dataset = to_tensor_dataset(x, t, cfg.training.device)
-        
-        # Split dataset (use fixed seed for consistency)
-        print("[STEP] Split dataset...")
-        train_set, val_set, test_set = split_dataset(
-            dataset,
-            cfg.data_split.train_ratio,
-            cfg.data_split.val_ratio,
-            cfg.data_split.test_ratio,
-            cfg.training.seed  # Fixed seed for all trials
-        )
-        print(f"[OK] Sizes -> train={len(train_set)}, val={len(val_set)}, test={len(test_set)}")
-        
-        # Create dataloaders
-        print("[STEP] Build dataloaders...")
-        # Set num_workers=0 to avoid multiprocessing issues with large images
-        # pin_memory=False for large images to reduce memory pressure
-        train_loader = DataLoader(
-            train_set,
-            batch_size=cfg.training.batch_size,
-            shuffle=True,
-            num_workers=0,  # Disable multiprocessing to avoid deadlocks
-            pin_memory=False  # Disable pin_memory for large images
-        )
-        val_loader = DataLoader(
-            val_set,
-            batch_size=cfg.training.batch_size,
-            shuffle=False,
-            num_workers=0,
-            pin_memory=False
-        )
-        test_loader = DataLoader(
-            test_set,
-            batch_size=cfg.training.batch_size,
-            shuffle=False,
-            num_workers=0,
-            pin_memory=False
-        )
-        
-        # 5. Create model
-        print("[STEP] Build model...")
-        x_sample = dataset.tensors[0]
-        device = torch.device(cfg.training.device)
-        out_dim = dataset.tensors[1].shape[1] if dataset.tensors[1].ndim == 2 else 1
-        model = create_model(cfg, x_sample, out_dim, device)
-
-        # Disable DataParallel for large images to avoid deadlock/hanging issues
-        # DataParallel can cause deadlocks with very large input images (1400x2500)
-        # Use single GPU instead for stability
-        num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-        if num_gpus > 1:
-            print(f"[WARN] Multiple GPUs available ({num_gpus}), but DataParallel disabled for large images")
-            print(f"[WARN] Using single GPU: {device} to avoid potential deadlocks")
-            print(f"[INFO] If you need multi-GPU, consider using DistributedDataParallel instead")
-        else:
-            print(f"[INFO] Using single GPU: {device}")
-        
-        # Disable cudnn benchmark for large images to avoid memory issues
-        torch.backends.cudnn.benchmark = False
-        
-        # Create optimizer and loss
-        criterion = nn.MSELoss()
-        optimizer = optim.Adam(
-            model.parameters(),
-            lr=cfg.training.learning_rate,
-            weight_decay=cfg.training.weight_decay
-        )
-        
-        # 6. Training with pruning support
-        print("[STEP] Training...")
-        train_losses = []
-        val_losses = []
-        best_val_loss = float('inf')
-        
-        for epoch in range(1, cfg.training.epochs + 1):
-            t_ep = time.time()
+                cfg.dataset.x_key, 
+                cfg.dataset.t_key
+            )
+            print(f"[OK] Loaded. x.shape={x.shape}, t.shape={t.shape}")
             
-            # Train one epoch
-            tr = train_one_epoch(
-                model, train_loader, criterion, optimizer, device,
-                cfg.logging.print_every_n_batches
+            # Exclude Channel 1 and Channel 3 (keep only channels 0, 2)
+            if x.ndim == 4 and x.shape[1] == 4:
+                print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
+                x = x[:, [0, 2], :, :]  # Keep only channels 0, 2
+                print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
+                # Update model config to reflect 2 channels
+                cfg.model.in_channels = 2
+            elif x.ndim == 3 and x.shape[1] == 4:
+                print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
+                x = x[:, [0, 2], :]  # Keep only channels 0, 2
+                print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
+                # Update model config to reflect 2 channels
+                cfg.model.in_channels = 2
+            
+            # Limit samples if specified
+            if cfg.dataset.limit_samples > 0:
+                n = min(cfg.dataset.limit_samples, x.shape[0])
+                x = x[:n]
+                t = t[:n]
+                print(f"[INFO] Limited to first {n} samples")
+            
+            # Optional downsampling
+            if x.ndim == 4 and cfg.dataset.downsample_factor > 1:
+                h0 = x.shape[2]
+                x = x[:, :, ::cfg.dataset.downsample_factor, :]
+                print(f"[INFO] Downsampled H: {h0} -> {x.shape[2]} (factor={cfg.dataset.downsample_factor})")
+            
+            # Create dataset (keep data on CPU, move to GPU only during training)
+            print("[STEP] Build dataset tensors...")
+            # Note: to_tensor_dataset creates tensors on CPU by default
+            # They will be moved to GPU in batches during training
+            dataset = to_tensor_dataset(x, t, "cpu")  # Force CPU storage
+            
+            # Delete original numpy arrays to free memory
+            # Tensors have their own memory copy, so we can safely delete numpy arrays
+            del x, t
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            # Split dataset (use fixed seed for consistency)
+            print("[STEP] Split dataset...")
+            train_set, val_set, test_set = split_dataset(
+                dataset,
+                cfg.data_split.train_ratio,
+                cfg.data_split.val_ratio,
+                cfg.data_split.test_ratio,
+                cfg.training.seed  # Fixed seed for all trials
+            )
+            print(f"[OK] Sizes -> train={len(train_set)}, val={len(val_set)}, test={len(test_set)}")
+            
+            # Clear memory before creating dataloaders
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            # Create dataloaders
+            print("[STEP] Build dataloaders...")
+            # Set num_workers=0 to avoid multiprocessing issues with large images
+            # pin_memory=False for large images to reduce memory pressure
+            # persistent_workers=False to avoid keeping workers in memory
+            train_loader = DataLoader(
+                train_set,
+                batch_size=cfg.training.batch_size,
+                shuffle=True,
+                num_workers=0,  # Disable multiprocessing to avoid deadlocks
+                pin_memory=False,  # Disable pin_memory for large images
+                persistent_workers=False
+            )
+            val_loader = DataLoader(
+                val_set,
+                batch_size=cfg.training.batch_size,
+                shuffle=False,
+                num_workers=0,
+                pin_memory=False,
+                persistent_workers=False
+            )
+            test_loader = DataLoader(
+                test_set,
+                batch_size=cfg.training.batch_size,
+                shuffle=False,
+                num_workers=0,
+                pin_memory=False,
+                persistent_workers=False
             )
             
-            # Evaluate validation set
-            if len(val_loader.dataset) > 0:
-                val_mse, val_mae, _, _ = evaluate(model, val_loader, criterion, device)
+            # 5. Create model
+            print("[STEP] Build model...")
+            # Use a small sample for model creation to save memory
+            # Only take the first sample, don't keep reference to full dataset
+            x_sample = dataset.tensors[0][:1].clone()  # Take only first sample and clone
+            device = torch.device(cfg.training.device)
+            out_dim = dataset.tensors[1].shape[1] if dataset.tensors[1].ndim == 2 else 1
+            model = create_model(cfg, x_sample, out_dim, device)
+            
+            # Clear sample tensor from GPU memory
+            del x_sample
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            # Disable DataParallel for large images to avoid deadlock/hanging issues
+            # DataParallel can cause deadlocks with very large input images (1400x2500)
+            # Use single GPU instead for stability
+            num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+            if num_gpus > 1:
+                print(f"[WARN] Multiple GPUs available ({num_gpus}), but DataParallel disabled for large images")
+                print(f"[WARN] Using single GPU: {device} to avoid potential deadlocks")
+                print(f"[INFO] If you need multi-GPU, consider using DistributedDataParallel instead")
             else:
-                val_mse, val_mae = 0.0, 0.0
+                print(f"[INFO] Using single GPU: {device}")
             
-            train_losses.append(tr)
-            val_losses.append(val_mse)
+            # Disable cudnn benchmark for large images to avoid memory issues
+            torch.backends.cudnn.benchmark = False
             
-            # Update best validation loss
-            if val_mse < best_val_loss:
-                best_val_loss = val_mse
+            # Create optimizer and loss
+            criterion = nn.MSELoss()
+            optimizer = optim.Adam(
+                model.parameters(),
+                lr=cfg.training.learning_rate,
+                weight_decay=cfg.training.weight_decay
+            )
             
-            # Report to Optuna for pruning
-            trial.report(val_mse, step=epoch)
+            # 6. Pre-training checks
+            print("[STEP] Pre-training checks...")
             
-            # Check if trial should be pruned
-            if trial.should_prune():
-                print(f"[PRUNED] Trial {trial.number} pruned at epoch {epoch}")
-                raise optuna.TrialPruned()
+            # Check 1: Verify dataset is on CPU
+            print("\n[CHECK 1] Verifying dataset is on CPU memory...")
+            dataset_on_cpu = _check_dataset_on_cpu(train_set, "train_set")
+            if not dataset_on_cpu:
+                print("[ERROR] Dataset is not on CPU memory. Cannot proceed with training.")
+                raise RuntimeError("Dataset tensors are not on CPU memory")
             
-            # Print progress
-            if epoch % cfg.logging.print_every_n_epochs == 0:
-                print(f"Epoch {epoch:03d}/{cfg.training.epochs} | "
-                      f"train MSE={tr:.6f} | val MSE={val_mse:.6f} | "
-                      f"val MAE={val_mae:.6f} | {time.time()-t_ep:.2f}s")
+            # Check 2: Test batch transfer to GPU
+            print("\n[CHECK 2] Testing batch transfer to GPU...")
+            if torch.cuda.is_available():
+                batch_transfer_success, actual_batch_size, error_msg = _check_batch_transfer_to_gpu(
+                    train_loader, device, cfg.training.batch_size
+                )
+                if not batch_transfer_success:
+                    print(f"[ERROR] Batch transfer test failed: {error_msg}")
+                    print(f"[ERROR] Training cannot proceed. Please reduce batch_size or use downsample_factor")
+                    raise RuntimeError(f"Batch transfer to GPU failed: {error_msg}")
+                print(f"[OK] Pre-training checks passed!")
+            else:
+                print("[INFO] GPU not available, skipping GPU batch transfer test")
+            
+            # 7. Training with pruning support
+            print("[STEP] Training...")
+            train_losses = []
+            val_losses = []
+            best_val_loss = float('inf')
+            
+            for epoch in range(1, cfg.training.epochs + 1):
+                t_ep = time.time()
+                
+                # Train one epoch
+                tr = train_one_epoch(
+                    model, train_loader, criterion, optimizer, device
+                )
+                
+                # Evaluate validation set
+                if len(val_loader.dataset) > 0:
+                    val_mse, val_mae, _, _ = evaluate(model, val_loader, criterion, device)
+                else:
+                    val_mse, val_mae = 0.0, 0.0
+                
+                train_losses.append(tr)
+                val_losses.append(val_mse)
+                
+                # Update best validation loss
+                if val_mse < best_val_loss:
+                    best_val_loss = val_mse
+                
+                # Report to Optuna for pruning
+                trial.report(val_mse, step=epoch)
+                
+                # Check if trial should be pruned
+                if trial.should_prune():
+                    print(f"[PRUNED] Trial {trial.number} pruned at epoch {epoch}")
+                    raise optuna.TrialPruned()
+                
+                # Print progress (loss changes only)
+                if epoch % cfg.logging.print_every_n_epochs == 0:
+                    print(f"Epoch {epoch:03d}/{cfg.training.epochs} | "
+                          f"train MSE={tr:.6f} | val MSE={val_mse:.6f} | "
+                          f"val MAE={val_mae:.6f} | {time.time()-t_ep:.2f}s")
+            
+            # 7. Evaluate on test set
+            print("[STEP] Testing...")
+            test_mse, test_mae, y_pred, y_true = evaluate(model, test_loader, criterion, device)
+            print(f"Test  | MSE={test_mse:.6f} | MAE={test_mae:.6f}")
+            
+            # Print per-target results
+            if y_pred.shape[1] > 1:
+                print(f"[INFO] Per-target results:")
+                for i in range(y_pred.shape[1]):
+                    target_mse = np.mean((y_pred[:, i] - y_true[:, i])**2)
+                    target_mae = np.mean(np.abs(y_pred[:, i] - y_true[:, i]))
+                    print(f"  Target {i+1}: MSE={target_mse:.6f}, MAE={target_mae:.6f}")
+            
+            # 8. Save model
+            weights_dir = os.path.join(output_dir, "weights")
+            # Save underlying module state_dict if wrapped by DataParallel
+            state_dict = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
+            torch.save(state_dict, os.path.join(weights_dir, cfg.output.model_filename))
+            
+            # 9. Save trial results
+            save_trial_results(
+                trial, cfg, output_dir,
+                train_losses, val_losses,
+                best_val_loss,
+                test_mse, test_mae,
+                y_pred, y_true
+            )
+            
+            # Set user attributes for Optuna
+            trial.set_user_attr('test_mse', float(test_mse))
+            trial.set_user_attr('test_mae', float(test_mae))
+            trial.set_user_attr('best_val_loss', float(best_val_loss))
+            trial.set_user_attr('output_dir', output_dir)
+            
+            elapsed = time.time() - t0
+            print(f"\n[OK] Trial {trial.number} completed in {elapsed:.2f}s")
+            print(f"Validation Loss: {best_val_loss:.6f}")
+            print(f"Test MSE: {test_mse:.6f}, Test MAE: {test_mae:.6f}\n")
+            
+            # Clear GPU memory after trial
+            # Note: x and t are already deleted, so pass None
+            _cleanup_trial_memory(
+                model, optimizer, criterion,
+                train_loader, val_loader, test_loader,
+                dataset, train_set, val_set, test_set,
+                None, None, y_pred, y_true  # x and t already deleted
+            )
+            
+            return best_val_loss
         
-        # 7. Evaluate on test set
-        print("[STEP] Testing...")
-        test_mse, test_mae, y_pred, y_true = evaluate(model, test_loader, criterion, device)
-        print(f"Test  | MSE={test_mse:.6f} | MAE={test_mae:.6f}")
-        
-        # Print per-target results
-        if y_pred.shape[1] > 1:
-            print(f"[INFO] Per-target results:")
-            for i in range(y_pred.shape[1]):
-                target_mse = np.mean((y_pred[:, i] - y_true[:, i])**2)
-                target_mae = np.mean(np.abs(y_pred[:, i] - y_true[:, i]))
-                print(f"  Target {i+1}: MSE={target_mse:.6f}, MAE={target_mae:.6f}")
-        
-        # 8. Save model
-        weights_dir = os.path.join(output_dir, "weights")
-        # Save underlying module state_dict if wrapped by DataParallel
-        state_dict = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
-        torch.save(state_dict, os.path.join(weights_dir, cfg.output.model_filename))
-        
-        # 9. Save trial results
-        save_trial_results(
-            trial, cfg, output_dir,
-            train_losses, val_losses,
-            best_val_loss,
-            test_mse, test_mae,
-            y_pred, y_true
-        )
-        
-        # Set user attributes for Optuna
-        trial.set_user_attr('test_mse', float(test_mse))
-        trial.set_user_attr('test_mae', float(test_mae))
-        trial.set_user_attr('best_val_loss', float(best_val_loss))
-        trial.set_user_attr('output_dir', output_dir)
-        
-        elapsed = time.time() - t0
-        print(f"\n[OK] Trial {trial.number} completed in {elapsed:.2f}s")
-        print(f"Validation Loss: {best_val_loss:.6f}")
-        print(f"Test MSE: {test_mse:.6f}, Test MAE: {test_mae:.6f}\n")
-        
-        # Clear GPU memory after trial
-        if torch.cuda.is_available():
-            del model, optimizer, criterion
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            # Force garbage collection
-            import gc
-            gc.collect()
-            torch.cuda.empty_cache()
-        
-        return best_val_loss
-        
-    except optuna.TrialPruned:
-        # Clean up if pruned
-        print(f"[INFO] Cleaning up pruned trial {trial.number}")
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-        raise
-    except Exception as e:
-        print(f"[ERROR] Trial {trial.number} failed: {e}")
-        # Clear GPU memory on error
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            import gc
-            gc.collect()
-            torch.cuda.empty_cache()
-        raise
+        except optuna.TrialPruned:
+            # Clean up if pruned
+            print(f"[INFO] Cleaning up pruned trial {trial.number}")
+            # Try to clean up if variables exist
+            try:
+                _cleanup_trial_memory(
+                    locals().get('model'), locals().get('optimizer'), locals().get('criterion'),
+                    locals().get('train_loader'), locals().get('val_loader'), locals().get('test_loader'),
+                    locals().get('dataset'), locals().get('train_set'), locals().get('val_set'), locals().get('test_set'),
+                    locals().get('x'), locals().get('t'), None, None
+                )
+            except:
+                pass
+            raise
+        except Exception as e:
+            print(f"[ERROR] Trial {trial.number} failed: {e}")
+            # Clear GPU memory on error
+            try:
+                _cleanup_trial_memory(
+                    locals().get('model'), locals().get('optimizer'), locals().get('criterion'),
+                    locals().get('train_loader'), locals().get('val_loader'), locals().get('test_loader'),
+                    locals().get('dataset'), locals().get('train_set'), locals().get('val_set'), locals().get('test_set'),
+                    locals().get('x'), locals().get('t'), None, None
+                )
+            except:
+                pass
+            raise
 
 
 def find_trial_output_dir(trial_number: int) -> str:
@@ -543,12 +1082,14 @@ def generate_study_summary(study: optuna.Study, output_dir: str):
     print(f"[OK] Study summary saved to {summary_path}")
 
 
-def generate_study_name(base_config_path: str) -> str:
+def generate_study_name(base_config_path: str, epoch_min: int = None, epoch_max: int = None) -> str:
     """
     Generate study name based on configuration to avoid mixing different experimental settings.
     
     Args:
         base_config_path: Path to base configuration file
+        epoch_min: Minimum epoch value (e.g., 100)
+        epoch_max: Maximum epoch value (e.g., 300)
     
     Returns:
         Study name string
@@ -565,6 +1106,10 @@ def generate_study_name(base_config_path: str) -> str:
     
     # Generate study name based on key settings
     study_name = f'cnn_opt_c{in_channels}_{dataset_hash}'
+    
+    # Add epoch range to study name if provided
+    if epoch_min is not None and epoch_max is not None:
+        study_name += f'_ep{epoch_min}-{epoch_max}'
     
     return study_name
 
@@ -585,9 +1130,11 @@ def main():
     
     # Generate study name based on configuration
     # This ensures different experimental settings use different studies
-    study_name = generate_study_name(BASE_CONFIG_PATH)
+    # Epoch range is included to distinguish studies with different training durations
+    study_name = generate_study_name(BASE_CONFIG_PATH, epoch_min=EPOCH_MIN, epoch_max=EPOCH_MAX)
     print(f"[INFO] Generated study name: {study_name}")
-    print(f"[INFO] This ensures different settings (channels, dataset, etc.) use separate studies")
+    print(f"[INFO] This ensures different settings (channels, dataset, epoch range, etc.) use separate studies")
+    print(f"[INFO] Epoch range: {EPOCH_MIN}-{EPOCH_MAX} (step={EPOCH_STEP})")
     try:
         study = optuna.create_study(
             study_name=study_name,
@@ -625,10 +1172,20 @@ def main():
     # Clear GPU memory before starting optimization
     if torch.cuda.is_available():
         print("[INFO] Clearing GPU memory before optimization...")
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
+        import gc
+        
+        # Multiple rounds of garbage collection and cache clearing
+        for _ in range(3):
+            gc.collect()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
         for i in range(torch.cuda.device_count()):
             torch.cuda.reset_peak_memory_stats(i)
+        
+        # Print initial memory status
+        _print_memory_status("before optimization starts")
+        
         print("[OK] GPU memory cleared")
     
     # Optimize

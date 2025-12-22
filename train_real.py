@@ -479,7 +479,7 @@ def main(cfg):
     
     for epoch in range(1, cfg.training.epochs + 1):
         t_ep = time.time()
-        tr = train_one_epoch(model, train_loader, criterion, optimizer, device, cfg.logging.print_every_n_batches)
+        tr = train_one_epoch(model, train_loader, criterion, optimizer, device)
         
         # Evaluate validation set if it exists
         if len(val_loader.dataset) > 0:
