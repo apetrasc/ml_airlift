@@ -12,7 +12,7 @@ dataset:
 # Model configuration
 model:
   type: SimpleCNNReal2D  # For 4D image data
-  in_channels: 2
+  in_channels: 1
   out_dim: 6  # 6 target variables
   resize_hw: null  # null means no resizing, use full resolution
   dropout_rate: 0.2  # Dropout rate for regularization (0.0-0.5 recommended)
@@ -21,7 +21,7 @@ model:
 
 # Training hyperparameters
 training:
-  device: cuda:0
+  device: cuda:2
   epochs: 100
   batch_size: 8
   learning_rate: 0.0001

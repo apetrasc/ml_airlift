@@ -94,7 +94,7 @@ def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
     cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 1, 4)
     
     # Limit epochs for faster optimization (can be adddddjusted)
-    cfg.training.epochs = trial.suggest_int('training.epochs', 50, 200, step=50)
+    cfg.training.epochs = trial.suggest_int('training.epochs', 50, 550, step=100)
     
     return cfg
 
