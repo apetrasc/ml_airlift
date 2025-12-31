@@ -152,8 +152,10 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
     x_tmp = x_tmp[:,208:2708]
 
     x_test_filterd=filter_signal(filter_freq, x_tmp, fs)
-    x_test = x_test_filterd.copy()
-    raw_tmp = x_test.copy()
+    x_test=x_test_filterd.copy()
+    # x_test[:,400:2250] *= 1.5
+    # x_test[:,2250:2360] *= 0.32978783880128937
+    # x_test[:,2360:2500] *= 0.568639541026613
     if if_hilbert:
         print(f'hilbert started')
         x_raw_torch = torch.from_numpy(x_test).float()
@@ -257,41 +259,41 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
             plt.savefig(os.path.join(png_save_dir,f'{base_filename}_{png_name}.png'))
         #plt.show()
         plt.close()
-        plt.figure(figsize=(10, 4))
-        plt.rcParams["font.size"] = 18
-        plt.plot(t*1e6,raw_tmp[plot_idx,:],
-                 color='blue',label='Raw Signal')
-        plt.xlabel("Time (µs)")
-        plt.xlim(0, 50)
-        plt.ylim(-1.5, 1.5)
-        plt.ylabel("Amplitude (V)")
-        plt.tight_layout()
-        plt.legend()
-        if png_save_dir!=None:
-            base_filename = os.path.splitext(os.path.basename(path))[0]
-            plt.savefig(os.path.join(png_save_dir,f'{base_filename}_{png_name}_pulse.png'))
-        #plt.show()
-        plt.close()
-        plt.figure(figsize=(10, 4))
-        freq = np.arange(0,fs,1/32e-6)
-        x_test_for_fft = torch.from_numpy(x_tmp_for_fft[plot_idx,630:2320]).float()
-        x_test_fft = torch.abs(torch.fft.fft(x_test_for_fft))
-        x_test_fft /= n_samples
-        x_test_fft_np = x_test_fft.cpu().numpy()
-        x_test_fft_np /= np.max(x_test_fft_np[40:])
-        plt.rcParams["font.size"] = 18
-        plt.plot(freq*1e-6,x_test_fft_np[:len(freq)],
-                 color='blue',label='FFT')
-        plt.xlabel("Frequency (MHz)")
-        plt.ylabel("Amplitude")
-        plt.xlim(-0.2, np.max(freq)*1e-6/2)
-        plt.ylim(0, 1)
-        plt.tight_layout()
-        plt.legend()
-        if png_save_dir!=None:
-            base_filename = os.path.splitext(os.path.basename(path))[0]
-            print("saving..")
-            plt.savefig(os.path.join(png_save_dir,f'{base_filename}_zoom_fft.png'))
+        # plt.figure(figsize=(10, 4))
+        # plt.rcParams["font.size"] = 18
+        # plt.plot(t*1e6,raw_tmp[plot_idx,:],
+        #          color='blue',label='Raw Signal')
+        # plt.xlabel("Time (µs)")
+        # plt.xlim(0, 50)
+        # plt.ylim(-1.5, 1.5)
+        # plt.ylabel("Amplitude (V)")
+        # plt.tight_layout()
+        # plt.legend()
+        # if png_save_dir!=None:
+        #     base_filename = os.path.splitext(os.path.basename(path))[0]
+        #     plt.savefig(os.path.join(png_save_dir,f'{base_filename}_{png_name}_pulse.png'))
+        # #plt.show()
+        # plt.close()
+        # plt.figure(figsize=(10, 4))
+        # freq = np.arange(0,fs,1/32e-6)
+        # x_test_for_fft = torch.from_numpy(x_tmp_for_fft[plot_idx,630:2320]).float()
+        # x_test_fft = torch.abs(torch.fft.fft(x_test_for_fft))
+        # x_test_fft /= n_samples
+        # x_test_fft_np = x_test_fft.cpu().numpy()
+        # x_test_fft_np /= np.max(x_test_fft_np[40:])
+        # plt.rcParams["font.size"] = 18
+        # plt.plot(freq*1e-6,x_test_fft_np[:len(freq)],
+        #          color='blue',label='FFT')
+        # plt.xlabel("Frequency (MHz)")
+        # plt.ylabel("Amplitude")
+        # plt.xlim(-0.2, np.max(freq)*1e-6/2)
+        # plt.ylim(0, 1)
+        # plt.tight_layout()
+        # plt.legend()
+        # if png_save_dir!=None:
+        #     base_filename = os.path.splitext(os.path.basename(path))[0]
+        #     print("saving..")
+        #     plt.savefig(os.path.join(png_save_dir,f'{base_filename}_zoom_fft.png'))
     return x_test_tensor_cnn
 
 def func_sigmoid(x, a, b, c, cx ,k):
