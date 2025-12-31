@@ -95,6 +95,23 @@ def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
     
     # Limit epochs for faster optimization (can be adddddjusted)
     cfg.training.epochs = trial.suggest_int('training.epochs', 50, 550, step=100)
+
+    # Preprocess suggestion
+    # Scaling
+    cfg.preprocess.scaling = trial.suggest_categorical(
+        'preprocess.scaling',
+        ['zscore','max_min']
+    )
+    # Envelope
+    cfg.preprocess.envelope = trial.suggest_categorical(
+        'preprocess.envelope',
+        [True, False]
+    )
+    # Noise Reduction
+    cfg.preprocess.noise_filter = trial.suggest_categorical(
+        'preprocess.noise_filter',
+        ['bandpass','wavelet','raw']
+    )
     
     return cfg
 
