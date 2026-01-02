@@ -11,6 +11,7 @@ import datetime
 import json
 import shutil
 import numpy as np
+import pywt
 
 # Tee class to output to both stdout and file
 class Tee:
@@ -59,6 +60,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, random_split
 import matplotlib.pyplot as plt
+
+import scipy.signal as signal
+import scipy.ndimage as ndimage
 
 import optuna
 from optuna.trial import Trial
@@ -139,7 +143,8 @@ def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
         )
     
     # Data hyperparameters
-    cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 1, 4)
+    # cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 1, 4)
+    cfg.dataset.downsample_factor = trial.suggest_int('dataset.downsample_factor', 2, 4)
     
     # Limit epochs for faster optimization (can be adjusted)
     # IMPORTANT: These values must match EPOCH_MIN, EPOCH_MAX, EPOCH_STEP defined at module level
@@ -151,9 +156,104 @@ def suggest_hyperparameters(trial: Trial, base_cfg: DictConfig) -> DictConfig:
         EPOCH_MAX, 
         step=EPOCH_STEP
     )
+
+    # Preprocess selection
+    # Scaling method
+    cfg.preprocess.scaling = trial.suggest_categorical(
+        'preprocess.scaling',
+        ['zscore','max']
+    )
+    # Noise reduction
+    cfg.preprocess.noise_reduction = trial.suggest_categorical(
+        'preprocess.noise_reduction',
+        ['bandpass','wavelet','raw']
+    )
+    # Harmonic decomposition
+    cfg.preprocess.harmonic_decomposition = trial.suggest_categorical(
+        'preprocess.harmonic_decomposition',
+        [True, False]
+    )
+    # Envelope
+    # cfg.preprocess.envelope = trial.suggest_categorical(
+    #     'preprocess.envelope',
+    #     [True, False]
+    # )
+    cfg.preprocess.envelope = True
+
+    if cfg.preprocess.envelope:
+        cfg.preprocess.resize_ratio = trial.suggest_float(
+            'preprocess.resize_ratio',
+            0.05,0.55,step=0.05
+        )
     
     return cfg
 
+
+class GradCAM:
+    def __init__(self,model,target_layer):
+        self.model=model
+        self.target_layer=target_layer
+        self.gradient = None
+        self.activations=None
+        self.hook_handles=[]
+        self._register_hooks()
+
+    def _register_hooks(self):
+        def forward_hook(output):
+            self.activations=output.detach()
+        def backward_hook(grad_out):
+            self.gradients = grad_out[0].detach()
+        self.hook_handles.append(self.target_layer.register_forward_hook(forward_hook))
+        self.hook_handles.append(self.target_layer.register_backward_hook(backward_hook))
+
+    def __call__(self, input_tensor, batch=False):
+        """
+        Compute Grad-CAM map(s) for the provided input tensor.
+
+        Args:
+            input_tensor (torch.Tensor): Tensor of shape [B, C, L] or [1, C, L].
+            batch (bool): If True, compute Grad-CAM for each sample independently
+                          and return a NumPy array of shape [B, L].
+                          If False, return a NumPy array of shape [L].
+        """
+        if batch:
+            cam_list = []
+            for sample in input_tensor:
+                cam = self._compute_single(sample.unsqueeze(0))
+                cam_list.append(cam)
+            return np.stack(cam_list, axis=0)
+
+        return self._compute_single(input_tensor)
+
+    def _compute_single(self, input_tensor):
+        self.model.eval()
+        device = next(self.model.parameters()).device
+        input_tensor = input_tensor.detach().to(device)
+        input_tensor.requires_grad_(True)
+        self.model.zero_grad()
+        out = self.model(input_tensor)
+        if isinstance(out, (tuple, list)):
+            out = out[0]
+        target = out.squeeze()
+        if target.ndim > 0:
+            target = target.sum()
+        self.model.zero_grad()
+        target.backward(retain_graph=True)
+        gradients = self.gradients         # [B, C, L]
+        activations = self.activations     # [B, C, L]
+        weights = gradients.mean(dim=2, keepdim=True)  # [B, C, 1]
+        grad_cam_map = (weights * activations).sum(dim=1, keepdim=True)  # (B,1,L)
+        grad_cam_map = torch.relu(grad_cam_map)
+        grad_cam_map = torch.nn.functional.interpolate(
+            grad_cam_map, size=input_tensor.shape[2], mode='linear', align_corners=False
+        )
+        grad_cam_map = grad_cam_map.squeeze().cpu().numpy()
+        grad_cam_map = (grad_cam_map - grad_cam_map.min()) / (grad_cam_map.max() - grad_cam_map.min() + 1e-8)
+        return grad_cam_map
+
+    def remove_hooks(self):
+        for handle in self.hook_handles:
+            handle.remove()
 
 def create_trial_output_dir(trial_number: int) -> str:
     """
@@ -675,6 +775,93 @@ def save_trial_results(trial: Trial, cfg: DictConfig, output_dir: str,
     print(f"[OK] Trial {trial.number} results saved to {output_dir}")
 
 
+def preprocess(x: np.ndarray, cfg: DictConfig):
+    """
+    preprocess signals for machine learning.
+
+    Flow
+    1. Filter raw signal (i.e. bandpass, wavelet)
+    2. Take amplitude using hilbert transform.
+    3. Filter image (i.e. opencv)
+    4. Take log1p
+
+    Args:
+        x: ndarray (shape: (number of experiment, transducer channel, number of pulse, data length per pulse))
+        cfg: DictConfig (decide how to preprocess)
+
+    Return:
+        x: ndarray (same shape as x)
+    """
+    fs = 52083333.842615336
+    x=x.astype('float32')
+
+    # Noise reduction
+    if cfg.preprocess.noise_reduction == 'bandpass':
+        sos = signal.butter(N=16, Wn=[1e6, 10e6], btype="bandpass",
+                            output="sos", fs=fs)
+        x = signal.sosfiltfilt(sos=sos, x=x, axis=3)
+        del sos 
+        print(f"[OK] Bandpass filter done.")
+    if cfg.preprocess.noise_reduction == 'wavelet':
+        sos = signal.butter(N=16, Wn=1e6, btype='lowpass',
+                            output='sos', fs=fs)
+        coeff = pywt.wavedec(x, wavelet='db9', mode='per', axis=3)
+        sigma = np.std(coeff[-1],axis=3,keepdims=True)
+        thres = sigma * np.sqrt(2*np.log(x.shape[3]))
+        coeff[1:] = (pywt.threshold(i, value=thres, mode='hard')
+                    for i in coeff[1:])
+        x = pywt.waverec(coeff, wavelet='db9', mode='per', axis=3)
+        del coeff
+        del thres
+        del sos
+        del sigma
+        print(f"[OK] Wavelet filter done.")
+    
+    # Harmonic decomposition
+    if cfg.preprocess.harmonic_decomposition:
+        sos1 = signal.butter(N=16, Wn=[2e6, 6e6], btype="bandpass",
+                            output="sos", fs=fs)
+        sos2 = signal.butter(N=16, Wn=[6e6, 10e6], btype="bandpass",
+                            output="sos", fs=fs)
+        x[:,:x.shape[1],:,:] = signal.sosfiltfilt(
+            sos1, x[:,:x.shape[1],:,:], axis=3
+        )
+        x[:,x.shape[1]:,:,:] = signal.sosfiltfilt(
+            sos2, x[:,x.shape[1]:,:,:], axis=3
+        )
+        del sos1
+        del sos2
+        print(f"[OK] Harmonic decomposition done.")
+
+    # Scaling
+    if cfg.preprocess.scaling == 'zscore':
+        mean = np.mean(x,axis=3,keepdims=True)
+        std = np.std(x,axis=3,keepdims=True)+1e-8
+        x = (x-mean)/std
+        del mean
+        del std
+        print(f"[OK] Scaling done.")
+    if cfg.preprocess.scaling == 'max':
+        max = np.max(x,axis=3,keepdims=True)
+        x = x/max
+        del max
+        print(f"[OK] Scaling done.")
+    
+    # Envelope
+    if cfg.preprocess.envelope:
+        x = np.abs(signal.hilbert(x, axis=3))
+        print(f"[OK] Envelope done.")
+
+    return x
+
+def resize(x: np.ndarray, cfg: DictConfig):
+    if cfg.preprocess.envelope:
+        x = ndimage.zoom(
+            x,(1.0,1.0,1.0/float(cfg.dataset.downsample_factor),cfg.preprocess.resize_ratio)
+        )
+        print(f"[OK] Resize done.")
+    return x
+
 def objective(trial: Trial, base_config_path: str) -> float:
     """
     Optuna objective function.
@@ -752,11 +939,17 @@ def objective(trial: Trial, base_config_path: str) -> float:
                 cfg.dataset.t_key
             )
             print(f"[OK] Loaded. x.shape={x.shape}, t.shape={t.shape}")
-            
+            # raise ValueError("error!")
             # Exclude Channel 1 and Channel 3 (keep only channels 0, 2)
             if x.ndim == 4 and x.shape[1] == 4:
                 print(f"[INFO] Excluding Channel 1 and Channel 3 (keeping channels 0, 2)")
                 x = x[:, [0, 2], :, :]  # Keep only channels 0, 2
+                print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
+                # Update model config to reflect 2 channels
+                cfg.model.in_channels = 2
+            elif x.ndim == 4 and x.shape[1] == 1:
+                print(f"[INFO] Using Channel 0")
+                x = x[:, :, :, :]
                 print(f"[OK] After excluding Channel 1 and 3: x.shape={x.shape}")
                 # Update model config to reflect 2 channels
                 cfg.model.in_channels = 2
@@ -774,12 +967,21 @@ def objective(trial: Trial, base_config_path: str) -> float:
                 t = t[:n]
                 print(f"[INFO] Limited to first {n} samples")
             
-            # Optional downsampling
-            if x.ndim == 4 and cfg.dataset.downsample_factor > 1:
-                h0 = x.shape[2]
-                x = x[:, :, ::cfg.dataset.downsample_factor, :]
-                print(f"[INFO] Downsampled H: {h0} -> {x.shape[2]} (factor={cfg.dataset.downsample_factor})")
-            
+            # # Optional downsampling
+            # if x.ndim == 4 and cfg.dataset.downsample_factor > 1:
+            #     h0 = x.shape[2]
+            #     x = x[:, :, ::cfg.dataset.downsample_factor, :]
+            #     print(f"[INFO] Downsampled H: {h0} -> {x.shape[2]} (factor={cfg.dataset.downsample_factor})")
+
+            # Preprocess before tensor transform
+            if cfg.preprocess.harmonic_decomposition:
+                x = np.repeat(x, 2 ,axis=1)
+            for i in range(10):
+                extract_idx = np.arange((i*x.shape[0])//10, ((i+1)*x.shape[0])//10).astype(int)
+                x[extract_idx,:,:,:] = preprocess(x[extract_idx,:,:,:], cfg)
+            del extract_idx
+            print("[STEP] Resizing...")
+            x = resize(x, cfg)
             # Create dataset (keep data on CPU, move to GPU only during training)
             print("[STEP] Build dataset tensors...")
             # Note: to_tensor_dataset creates tensors on CPU by default
