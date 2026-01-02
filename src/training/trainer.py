@@ -18,7 +18,7 @@ sys.path.insert(0, parent_dir)
 from src.models.cnn import SimpleCNNReal, SimpleCNNReal2D
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, device, print_every=50):
+def train_one_epoch(model, dataloader, criterion, optimizer, device):
     """Train model for one epoch."""
     model.train()
     total = 0.0
@@ -73,9 +73,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, print_every
                 # Periodically clear cache to prevent fragmentation
                 if (i + 1) % 10 == 0:
                     torch.cuda.empty_cache()
-            
-            if (i + 1) % print_every == 0:
-                print(f"  [train] step {i+1}/{len(dataloader)} loss={loss_value:.6f}")
+        
         except RuntimeError as e:
             if 'CUDA' in str(e) or 'illegal memory access' in str(e).lower():
                 print(f"[ERROR] CUDA error at batch {i}: {e}")
@@ -85,6 +83,9 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, print_every
                 raise
             else:
                 raise
+    
+    # Note: Final step is now printed within the loop if needed, so no need to print here
+    # This prevents duplicate printing and ensures messages appear in correct order
     
     return total / len(dataloader.dataset)
 

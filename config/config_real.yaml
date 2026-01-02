@@ -21,7 +21,7 @@ model:
 
 # Training hyperparameters
 training:
-  device: cuda:2
+  device: cuda:0
   epochs: 100
   batch_size: 8
   learning_rate: 0.0001
@@ -37,7 +37,7 @@ data_split:
 
 # Output configuration
 output:
-  model_save_dir: /mnt/sdb/yyamaguchi/airlift/data/experiments/outputs_real
+  model_save_dir: /mnt/sdb/yyamaguchi/airlift/data/experiments/outputs_real/outputs20260101
   model_filename: model_simplecnn_real.pth
   predictions_filename: y_pred.npy
   ground_truth_filename: y_true.npy
@@ -59,4 +59,13 @@ evaluation:
     - "Solid Volume Fraction"
     - "Gas Volume Fraction"
     - "Liquid Volume Fraction"
+
+preprocess:
+  extract: true
+  scaling: 'zscore'
+  noise_reduction: 'wavelet'
+  harmonic_decomposition: true
+  envelope: true
+  resize_ratio: 0.2
+
 

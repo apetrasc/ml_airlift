@@ -63,15 +63,12 @@ pip install torch torchvision
 
 訓練と評価では異なるGPUを使用するため、`config/config.yaml`で設定を確認してください。
 
-### データセットの構築
+### データセットの構築(Channel 1とChannel 3を除外)
 
 #### 1. データセットの準備
 
 元のデータセットファイル（`x_train.npy`と`t_train.npy`）を準備します。データセットは機密情報のため、必要に応じて連絡してください。
 
-#### 2. チャネル除外データセットの作成
-
-訓練では、Channel 1とChannel 3を除外したデータセットを使用します。以下のスクリプトでデータセットを構築できます：
 
 ```bash
 # Channel 1とChannel 3を除外したデータセットを作成
@@ -89,7 +86,7 @@ python create_dropped_dataset.py
 - `x_train_dropped.npy`: Channel 1と3を除外した入力データ（2チャネル）
 - `t_train_dropped.npy`: ターゲットデータ（変更なし）
 
-#### 3. データセットの検証
+#### 2. データセットの検証
 
 データセットを構築した後、以下のスクリプトでデータセットを検証できます：
 

@@ -7,7 +7,9 @@ Also validates dataset with Channel 3 excluded (for training use).
 
 import os
 import sys
+import argparse
 import numpy as np
+import matplotlib.pyplot as plt
 from omegaconf import OmegaConf
 from pathlib import Path
 
@@ -21,7 +23,7 @@ def format_bytes(bytes_size):
     return f"{bytes_size:.2f} PB"
 
 
-def validate_channel(arr, channel_idx, channel_name="Channel"):
+def validate_channel(arr, channel_idx, channel_name="Channel", show_percentiles=False):
     """
     Validate a single channel and print detailed statistics.
     
@@ -69,12 +71,13 @@ def validate_channel(arr, channel_idx, channel_name="Channel"):
         print(f"  Std: {valid_arr.std():.6f}")
         print(f"  Median: {np.median(valid_arr):.6f}")
         
-        # Percentiles
-        percentiles = [1, 5, 10, 25, 50, 75, 90, 95, 99]
-        print(f"\nPercentiles:")
-        for p in percentiles:
-            val = np.percentile(valid_arr, p)
-            print(f"  {p:2d}%: {val:12.6f}")
+        # Percentiles (optional)
+        if show_percentiles:
+            percentiles = [1, 5, 10, 25, 50, 75, 90, 95, 99]
+            print(f"\nPercentiles:")
+            for p in percentiles:
+                val = np.percentile(valid_arr, p)
+                print(f"  {p:2d}%: {val:12.6f}")
         
         # Check for extreme values
         if np.abs(valid_arr).max() > 1e6:
@@ -185,7 +188,7 @@ def validate_channel(arr, channel_idx, channel_name="Channel"):
     }
 
 
-def validate_array(arr, name, path):
+def validate_array(arr, name, path, show_percentiles=False):
     """Validate a numpy array and print statistics."""
     print(f"\n{'='*70}")
     print(f"Validating: {name}")
@@ -241,12 +244,13 @@ def validate_array(arr, name, path):
         print(f"  Std: {valid_arr.std():.6f}")
         print(f"  Median: {np.median(valid_arr):.6f}")
         
-        # Percentiles
-        percentiles = [1, 5, 25, 50, 75, 95, 99]
-        print(f"\nPercentiles:")
-        for p in percentiles:
-            val = np.percentile(valid_arr, p)
-            print(f"  {p:2d}%: {val:.6f}")
+        # Percentiles (optional)
+        if show_percentiles:
+            percentiles = [1, 5, 25, 50, 75, 95, 99]
+            print(f"\nPercentiles:")
+            for p in percentiles:
+                val = np.percentile(valid_arr, p)
+                print(f"  {p:2d}%: {val:.6f}")
     else:
         print(f"\n[ERROR] No valid (finite) values found in array!")
     
@@ -274,7 +278,62 @@ def validate_array(arr, name, path):
     }
 
 
-def validate_dataset_pair(x_path, t_path):
+def save_sample_images_per_channel(x, output_root="tests"):
+    """
+    Save dataset sample images per channel for quick visual inspection.
+    
+    - Uses the first sample (index 0).
+    - Saves one image per channel under tests/dataset_samples.
+    """
+    if x.ndim < 3:
+        print("[INFO] X has less than 3 dimensions, skipping image export.")
+        return
+
+    out_dir = Path(output_root) / "dataset_samples"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    n_samples = x.shape[0]
+    if n_samples == 0:
+        print("[WARNING] X has zero samples, skipping image export.")
+        return
+
+    sample_idx = 0
+    sample = x[sample_idx]
+
+    # Determine (C, H, W) or (C, L)
+    if sample.ndim == 3:
+        # (C, H, W)
+        n_channels = sample.shape[0]
+        for ch in range(n_channels):
+            img = sample[ch]
+            plt.figure(figsize=(6, 4))
+            plt.imshow(img, aspect="auto", cmap="jet")
+            plt.title(f"Sample {sample_idx} - Channel {ch}")
+            plt.colorbar()
+            save_path = out_dir / f"sample{sample_idx}_ch{ch}.png"
+            plt.tight_layout()
+            plt.savefig(save_path, dpi=150, bbox_inches="tight")
+            plt.close()
+            print(f"[INFO] Saved channel image: {save_path}")
+    elif sample.ndim == 2:
+        # (C, L) -> treat each channel as 2D with shape (1, L)
+        n_channels = sample.shape[0]
+        for ch in range(n_channels):
+            img = sample[ch][None, :]  # (1, L)
+            plt.figure(figsize=(6, 3))
+            plt.imshow(img, aspect="auto", cmap="jet")
+            plt.title(f"Sample {sample_idx} - Channel {ch}")
+            plt.colorbar()
+            save_path = out_dir / f"sample{sample_idx}_ch{ch}.png"
+            plt.tight_layout()
+            plt.savefig(save_path, dpi=150, bbox_inches="tight")
+            plt.close()
+            print(f"[INFO] Saved channel image: {save_path}")
+    else:
+        print(f"[INFO] Unexpected sample ndim={sample.ndim}, skipping image export.")
+
+
+def validate_dataset_pair(x_path, t_path, show_percentiles=False, save_samples=True):
     """Validate X and T dataset pair and check consistency."""
     print("\n" + "="*70)
     print("DATASET VALIDATION REPORT")
@@ -322,7 +381,7 @@ def validate_dataset_pair(x_path, t_path):
         # Detailed channel-wise analysis
         channel_results = []
         for ch_idx in range(4):
-            ch_result = validate_channel(x, ch_idx, "Channel")
+            ch_result = validate_channel(x, ch_idx, "Channel", show_percentiles=show_percentiles)
             if ch_result:
                 channel_results.append(ch_result)
         
@@ -349,14 +408,14 @@ def validate_dataset_pair(x_path, t_path):
         print(f"\n{'='*70}")
         print("X DATASET - OVERALL STATISTICS (All Channels Combined)")
         print(f"{'='*70}")
-        x_result_original = validate_array(x, "X (Features) - Original", x_path)
+        x_result_original = validate_array(x, "X (Features) - Original", x_path, show_percentiles=show_percentiles)
         channel_excluded = True
         
         # Validate T dataset
         print(f"\n{'='*70}")
         print("T DATASET - TARGETS VALIDATION")
         print(f"{'='*70}")
-        t_result = validate_array(t, "T (Targets)", t_path)
+        t_result = validate_array(t, "T (Targets)", t_path, show_percentiles=show_percentiles)
         
         print(f"\n{'='*70}")
         print("EXCLUDING CHANNEL 1 AND CHANNEL 3 (Keeping channels 0, 2)")
@@ -378,7 +437,7 @@ def validate_dataset_pair(x_path, t_path):
         # Map original channel indices to new indices
         # x_excluded now has shape (N, 2, H, W) where [:, 0, :, :] = original channel 0, [:, 1, :, :] = original channel 2
         for new_ch_idx, orig_ch_idx in enumerate([0, 2]):
-            validate_channel(x_excluded, new_ch_idx, f"Channel (original {orig_ch_idx})")
+            validate_channel(x_excluded, new_ch_idx, f"Channel (original {orig_ch_idx})", show_percentiles=show_percentiles)
         
         # Summary table of remaining channels
         print(f"\n{'='*70}")
@@ -475,7 +534,7 @@ def validate_dataset_pair(x_path, t_path):
         print(f"\n{'='*70}")
         print("EXCLUDED DATASET (After Channel 1 and 3 Exclusion)")
         print(f"{'='*70}")
-        x_result = validate_array(x_excluded, "X (Features) - Channel 1 and 3 Excluded", x_path)
+        x_result = validate_array(x_excluded, "X (Features) - Channel 1 and 3 Excluded", x_path, show_percentiles=show_percentiles)
         
         # Channel-wise detailed analysis for excluded data (channels 0, 2)
         print(f"\n{'='*70}")
@@ -521,7 +580,7 @@ def validate_dataset_pair(x_path, t_path):
             n_channels = x.shape[1]
             channel_results = []
             for ch_idx in range(n_channels):
-                ch_result = validate_channel(x, ch_idx, "Channel")
+                ch_result = validate_channel(x, ch_idx, "Channel", show_percentiles=show_percentiles)
                 if ch_result:
                     channel_results.append(ch_result)
             
@@ -550,15 +609,22 @@ def validate_dataset_pair(x_path, t_path):
         print(f"\n{'='*70}")
         print("X DATASET - OVERALL STATISTICS")
         print(f"{'='*70}")
-        x_result_original = validate_array(x, "X (Features)", x_path)
+        x_result_original = validate_array(x, "X (Features)", x_path, show_percentiles=show_percentiles)
         x_result = x_result_original
         
         # Validate T dataset
         print(f"\n{'='*70}")
         print("T DATASET - TARGETS VALIDATION")
         print(f"{'='*70}")
-        t_result = validate_array(t, "T (Targets)", t_path)
+        t_result = validate_array(t, "T (Targets)", t_path, show_percentiles=show_percentiles)
     
+    # Save sample images per channel (using final X)
+    if save_samples:
+        print(f"\n{'='*70}")
+        print("SAVING SAMPLE IMAGES PER CHANNEL")
+        print(f"{'='*70}")
+        save_sample_images_per_channel(x, output_root="tests")
+
     # Check consistency
     print(f"\n{'='*70}")
     print("CONSISTENCY CHECKS")
@@ -627,8 +693,13 @@ def validate_dataset_pair(x_path, t_path):
         return True
 
 
-def main():
-    """Main function."""
+def main(show_percentiles: bool = False):
+    """Main function.
+
+    Args:
+        show_percentiles: If True, compute and print percentile statistics.
+                          If False, percentile computation is skipped.
+    """
     # Load config
     config_path = "config/config_real.yaml"
     if not os.path.exists(config_path):
@@ -646,7 +717,7 @@ def main():
     print(f"[INFO] T dataset path: {t_path}")
     
     # Validate
-    success = validate_dataset_pair(x_path, t_path)
+    success = validate_dataset_pair(x_path, t_path, show_percentiles=show_percentiles, save_samples=True)
     
     if success:
         print(f"\n{'='*70}")
@@ -661,5 +732,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Validate dataset and optionally compute percentiles.")
+    parser.add_argument(
+        "--percentile",
+        action="store_true",
+        help="If set, compute and print percentile statistics. By default, percentiles are not computed.",
+    )
+    args = parser.parse_args()
+
+    main(show_percentiles=args.percentile)
 
