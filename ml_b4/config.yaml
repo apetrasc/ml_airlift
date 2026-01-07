@@ -1,0 +1,29 @@
+hyperparameters:
+  learning_rate: 0.001
+  num_epochs: 100
+  batch_size: 16
+  input_length: 2500
+  seed: 93
+  l1_lambda: 1.0e-7
+  l2_lambda: 1.0e-7
+device: cuda:0
+dataset:
+  dataset_dir: /mnt/sdb/yyamaguchi/simulationB4/bubble_glass_rand/dataset
+  dataset_name: two_env_std
+  target: gas
+  log_path: /mnt/sdb/yyamaguchi/simulationB4/bubble_glass_rand/dataset/output
+  train_ratio: 0.8
+training:
+  device: cuda:0
+evaluation:
+  target_variables_path: /mnt/sdb/matsubara/airlift/target_valiables.csv
+  processed_dir: /mnt/sdb/yyamaguchi/psdata2matlab/experiments/processed/solid_liquid
+  save_csv_path: /mnt/sdb/yyamaguchi/psdata2matlab/outputs/
+  device: cuda:0
+  tmp_path: /mnt/sdb/yyamaguchi/psdata2matlab/tmp
+  results_path: /mnt/sdb/yyamaguchi/psdata2matlab/outputs/
+  png_save_dir: /mnt/sdb/yyamaguchi/psdata2matlab/preprocessed/
+
+hydra:
+    run:
+        dir: /mnt/sdb/yyamaguchi/psdata2matlab/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

@@ -107,7 +107,7 @@ class GradCAM1d:
         grad_cam_map = (weights * activations).sum(dim=1, keepdim=True)  # (B,1,L)
         grad_cam_map = torch.relu(grad_cam_map)
         grad_cam_map = torch.nn.functional.interpolate(
-            grad_cam_map, size=input_tensor.shape[2], mode='linear', align_corners=False
+            grad_cam_ma, size=input_tensor.shape[2], mode='linear', align_corners=False
         )
         grad_cam_map = grad_cam_map.squeeze().cpu().numpy()
         grad_cam_map = (grad_cam_map - grad_cam_map.min()) / (grad_cam_map.max() - grad_cam_map.min() + 1e-8)
@@ -123,7 +123,7 @@ def preprocess_for_gradcam(x, sample_index=50, channel_index=0):
     """
     # data = np.load(file_path)
     # if 'arr_0' in data:
-    #     x = data['arr_0']
+    #     x = data['arr_0']p
     # else:
     #     arr_keys = list(data.keys())
     #     if not arr_keys:
