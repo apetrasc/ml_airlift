@@ -2,17 +2,17 @@
 
 # Data configuration
 dataset:
-  x_train: /home/smatsubara/documents/airlift/data/experiments/dataset/dropped_data/x_train_dropped.npy
-  t_train: /home/smatsubara/documents/airlift/data/experiments/dataset/dropped_data/t_train_dropped.npy
+  x_train: /mnt/sdb/yyamaguchi/airlift/data/experiments/dataset/dataset/x_train_first.npy
+  t_train: /mnt/sdb/yyamaguchi/airlift/data/experiments/dataset/dataset/t_train_first.npy
   x_key: x_train_real
   t_key: t_train_real
   limit_samples: 0  # 0 means use all samples
-  downsample_factor: 1  # 1 means no downsampling
+  downsample_factor: 4  # 1 means no downsampling
 
 # Model configuration
 model:
   type: SimpleCNNReal2D  # For 4D image data
-  in_channels: 2
+  in_channels: 1
   out_dim: 6  # 6 target variables
   resize_hw: null  # null means no resizing, use full resolution
   dropout_rate: 0.2  # Dropout rate for regularization (0.0-0.5 recommended)
@@ -37,7 +37,7 @@ data_split:
 
 # Output configuration
 output:
-  model_save_dir: /home/smatsubara/documents/airlift/data/outputs_real
+  model_save_dir: /mnt/sdb/yyamaguchi/airlift/data/experiments/outputs_real/outputs20260101
   model_filename: model_simplecnn_real.pth
   predictions_filename: y_pred.npy
   ground_truth_filename: y_true.npy
@@ -59,4 +59,13 @@ evaluation:
     - "Solid Volume Fraction"
     - "Gas Volume Fraction"
     - "Liquid Volume Fraction"
+
+preprocess:
+  extract: true
+  scaling: 'zscore'
+  noise_reduction: 'wavelet'
+  harmonic_decomposition: true
+  envelope: true
+  resize_ratio: 0.2
+
 

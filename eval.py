@@ -81,7 +81,7 @@ for row in target_variables.iter_rows(named=True):
     # Debug: Check if the file path is exactly as expected
     
     
-    if os.path.exists(file_path):
+    if os.path.exists(file_path) and row["気相体積率"]==0:
         if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20241011-1015_processed.npz":
             debug_pipeline(base_dir, 'config/config.yaml', file_path)
         if file_path == "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20240726-1600_processed.npz":
