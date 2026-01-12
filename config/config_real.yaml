@@ -2,8 +2,8 @@
 
 # Data configuration
 dataset:
-  x_train: /home/smatsubara/documents/airlift/data/experiments/dataset/dropped_data/x_train_dropped.npy
-  t_train: /home/smatsubara/documents/airlift/data/experiments/dataset/dropped_data/t_train_dropped.npy
+  x_train: /home/smatsubara/documents/airlift/data/experiments/dataset/nowall/x_train_nowall.npy
+  t_train: /home/smatsubara/documents/airlift/data/experiments/dataset/nowall/t_train_nowall.npy
   x_key: x_train_real
   t_key: t_train_real
   limit_samples: 0  # 0 means use all samples

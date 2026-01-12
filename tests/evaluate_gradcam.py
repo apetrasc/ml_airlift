@@ -192,7 +192,7 @@ def visualize_sample_gradcam(input_tensor, gradcam_map, target_name, save_path,
     
     # Column 1: Sample image (Hilbert transform)
     ax_sample = fig.add_subplot(gs[0, 0])
-    im_sample = ax_sample.imshow(sample_image, cmap='jet', aspect='auto', vmin=0.01, vmax=0.06)
+    im_sample = ax_sample.imshow(sample_image, cmap='jet', aspect='auto', vmin=0.01, vmax=0.5)
     ax_sample.set_title(f'Sample {sample_idx} | {target_name}{title_suffix}', fontsize=12)
     ax_sample.axis('off')
     plt.colorbar(im_sample, ax=ax_sample, fraction=0.046, pad=0.04)

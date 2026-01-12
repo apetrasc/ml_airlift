@@ -1,0 +1,13 @@
+Model Evaluation Summary
+==================================================
+Target       R²       RMSE     MAE      MSE     
+--------------------------------------------------
+Solid Velocity nan      0.4502   0.4502   0.2027  
+Gas Velocity nan      3.1016   3.1016   9.6197  
+Liquid Velocity nan      0.2256   0.2256   0.0509  
+Solid Volume Fraction nan      0.3792   0.3792   0.1438  
+Gas Volume Fraction nan      0.7959   0.7959   0.6335  
+Liquid Volume Fraction nan      0.7158   0.7158   0.5124  
+--------------------------------------------------
+Average      nan      0.9447   0.9447   1.8605  
+==================================================
