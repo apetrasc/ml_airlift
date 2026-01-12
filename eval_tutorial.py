@@ -55,7 +55,7 @@ model.load_state_dict(
 
 
 expdata_dir = "/mnt/sdb/yyamaguchi/psdata2matlab/experiments/processed/solid_liquid"
-exp_date = "P20241011-1132"
+exp_date = "P20240726-1600"
 file_path = os.path.join(expdata_dir, exp_date+"_processed.npz")
 x_npz = np.load(file_path)
 x_test = x_npz["processed_data"][:,:,0]
@@ -66,7 +66,8 @@ sample_index = 1000
 x_train_cnn = preprocess(path=file_path,if_log1p=True,if_hilbert=True,
                          x_test=x_test, device="cuda:0",fs=fs,
                          if_drawsignal=True,png_save_dir=png_save_dir,
-                         png_name="new",plot_idx=sample_index)
+                         png_name="new",plot_idx=sample_index,
+                         filter_freq=[1e6,10e6])
 x_train_cnn = x_train_cnn.squeeze(1)
 x_train = x_train_cnn.cpu().numpy()
 
@@ -107,7 +108,7 @@ class GradCAM1d:
         grad_cam_map = (weights * activations).sum(dim=1, keepdim=True)  # (B,1,L)
         grad_cam_map = torch.relu(grad_cam_map)
         grad_cam_map = torch.nn.functional.interpolate(
-            grad_cam_ma, size=input_tensor.shape[2], mode='linear', align_corners=False
+            grad_cam_map, size=input_tensor.shape[2], mode='linear', align_corners=False
         )
         grad_cam_map = grad_cam_map.squeeze().cpu().numpy()
         grad_cam_map = (grad_cam_map - grad_cam_map.min()) / (grad_cam_map.max() - grad_cam_map.min() + 1e-8)
@@ -204,7 +205,7 @@ plt.xlabel('Time Axis')
 plt.ylabel('Amplitude')
 plt.grid(True)
 plt.tight_layout()
-plt.savefig(os.path.join(gradcam_output_dir, f'gradcam{exp_date}_{sample_index}.png'))
+plt.savefig(os.path.join(gradcam_output_dir, f'gradcam{exp_date}_{sample_index}_2.png'))
 plt.close()
 
 # model.eval()

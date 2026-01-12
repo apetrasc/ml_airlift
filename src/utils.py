@@ -149,7 +149,7 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
     #     return pywt.waverec(coeff, wavelet, mode='per',axis=1)
     # x_test_filterd = denoise(x_tmp)
 
-    # x_tmp = x_tmp[:,208:2708]
+    x_tmp = x_tmp[:,208:2708]
 
     x_test_filterd=filter_signal(filter_freq, x_tmp, fs)
     x_test=x_test_filterd.copy()
@@ -169,18 +169,18 @@ def preprocess(path, device="cuda:0", filter_freq=[0, 1.0e9],
         print("nan")
         x_test = np.nan_to_num(x_test)
     print(f'x_test shape: {x_test.shape}')
-    argmax_pipe_ref2 = np.argmax(x_test>0.5,axis=1)
-    argmax_pipe_ref2 = np.mean(argmax_pipe_ref2)
-    argmax_pipe_ref2 = int(argmax_pipe_ref2)
-    up=47
-    down=50
-    S=230
-    x_test = x_test[:,argmax_pipe_ref2-S:]
-    # raw_tmp = raw_tmp[:,argmax_pipe_ref2-S:]
-    x_test=signal.resample_poly(x_test,up,down)
-    x_test=x_test[:,:2500]
-    # raw_tmp=raw_tmp[:,:2500]
-    print(f'argmax {argmax_pipe_ref2}')
+    # argmax_pipe_ref2 = np.argmax(x_test>0.5,axis=1)
+    # argmax_pipe_ref2 = np.mean(argmax_pipe_ref2)
+    # argmax_pipe_ref2 = int(argmax_pipe_ref2)
+    # up=47
+    # down=50
+    # S=230
+    # x_test = x_test[:,argmax_pipe_ref2-S:]
+    # # raw_tmp = raw_tmp[:,argmax_pipe_ref2-S:]
+    # x_test=signal.resample_poly(x_test,up,down,axis=1)
+    # x_test=x_test[:,:2500]
+    # # raw_tmp=raw_tmp[:,:2500]
+    # print(f'argmax {argmax_pipe_ref2}')
     pulse_num = x_test.shape[0]
     x_test_tensor = torch.from_numpy(x_test).float()
 
