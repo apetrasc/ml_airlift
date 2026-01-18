@@ -9,6 +9,13 @@ hyperparameter:
   huber_delta: 0.001
   l1_lambda: 1.0e-7
   l2_lambda: 1.0e-8
+  ksize1: 51
+  ksize2: 51
+  stride1: 1
+  stride2: 1
+  maxpool: 4
+  dropout: 0.1
+  kfolds: 5
 device: cuda:0
 dataset:
   dataset_dir: /mnt/sdb/yyamaguchi/simulationB4/bubble_glass_rand/dataset
