@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Evaluate model and generate Grad-CAM visualizations.
-Creates visualizations for gas_velocity, gas_volume_fraction, and liquid_volume_fraction.
+Creates visualizations for gas_velocity, gas_volume_fraction, liquid_volume_fraction, and solid_volume_fraction.
 """
 
 import os
@@ -316,7 +316,8 @@ def main():
     output_indices = {
         'gas_velocity': None,
         'gas_volume_fraction': None,
-        'liquid_volume_fraction': None
+        'liquid_volume_fraction': None,
+        'solid_volume_fraction': None
     }
     
     # Find output indices
@@ -327,6 +328,8 @@ def main():
             output_indices['gas_volume_fraction'] = idx
         elif 'Liquid Volume Fraction' in name:
             output_indices['liquid_volume_fraction'] = idx
+        elif 'Solid Volume Fraction' in name:
+            output_indices['solid_volume_fraction'] = idx
     
     print(f"[INFO] Output indices: {output_indices}")
     
@@ -335,7 +338,8 @@ def main():
     output_dirs = {
         'gas_velocity': base_output_dir / "gas_velocity",
         'gas_volume_fraction': base_output_dir / "gas_volume_fraction",
-        'liquid_volume_fraction': base_output_dir / "liquid_volume_fraction"
+        'liquid_volume_fraction': base_output_dir / "liquid_volume_fraction",
+        'solid_volume_fraction': base_output_dir / "solid_volume_fraction"
     }
     
     for dir_path in output_dirs.values():

@@ -2,15 +2,17 @@ import os
 import sys
 import numpy as np
 import torch
-from models import SimpleCNN
 
 # Ensure project root is on path
-sys.path.append('/home/smatsubara/documents/sandbox/ml_airlift')
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, project_root)
+
+from src.models.cnn import SimpleCNN
 
 
 def evaluate_simulation(
-    x_path: str = "/home/smatsubara/documents/airlift/data/simulation/arcaiv/x_train.npy",
-    t_path: str = "/home/smatsubara/documents/airlift/data/simulation/arcaiv/t_train.npy",
+    x_path: str = "/home/smatsubara/documents/airlift/data/simulation/dataset/x_train.npy",
+    t_path: str = "/home/smatsubara/documents/airlift/data/simulation/dataset/t_train.npy",
     weights_path: str = "/home/smatsubara/documents/airlift/data/results/layernorm/weights/model.pth",
     output_dir: str = "/home/smatsubara/documents/airlift/data/results/gradcamsim_outputs",
     device: str = "cuda:0",
@@ -95,6 +97,87 @@ def evaluate_simulation(
 
 
 if __name__ == "__main__":
-    evaluate_simulation()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Run inference on simulation data")
+    parser.add_argument(
+        '--datetime',
+        type=str,
+        default=None,
+        help='Base directory containing weights/model.pth (e.g., /path/to/models/layernorm)'
+    )
+    parser.add_argument(
+        '--x_path',
+        type=str,
+        default="/home/smatsubara/documents/airlift/data/simulation/dataset/x_train.npy",
+        help='Path to input data (x_train.npy)'
+    )
+    parser.add_argument(
+        '--t_path',
+        type=str,
+        default="/home/smatsubara/documents/airlift/data/simulation/dataset/t_train.npy",
+        help='Path to target data (t_train.npy, optional)'
+    )
+    parser.add_argument(
+        '--weights_path',
+        type=str,
+        default=None,
+        help='Path to model weights (overrides --datetime if specified)'
+    )
+    parser.add_argument(
+        '--output_dir',
+        type=str,
+        default=None,
+        help='Output directory for predictions'
+    )
+    parser.add_argument(
+        '--device',
+        type=str,
+        default="cuda:0",
+        help='Device to use (cuda:0, cpu, etc.)'
+    )
+    parser.add_argument(
+        '--input_length',
+        type=int,
+        default=2500,
+        help='Input length for SimpleCNN model'
+    )
+    
+    args = parser.parse_args()
+    
+    # Determine weights path
+    if args.weights_path:
+        weights_path = args.weights_path
+    elif args.datetime:
+        weights_path = os.path.join(args.datetime, 'weights', 'model.pth')
+        if not os.path.exists(weights_path):
+            # Try alternative path
+            alt_path = os.path.join(args.datetime, 'model.pth')
+            if os.path.exists(alt_path):
+                weights_path = alt_path
+            else:
+                raise FileNotFoundError(f"Model weights not found at {weights_path} or {alt_path}")
+    else:
+        weights_path = "/home/smatsubara/documents/airlift/data/results/layernorm/weights/model.pth"
+    
+    # Determine output directory
+    if args.output_dir:
+        output_dir = args.output_dir
+    elif args.datetime:
+        output_dir = os.path.join(args.datetime, 'predictions')
+    else:
+        output_dir = "/home/smatsubara/documents/airlift/data/results/gradcamsim_outputs"
+    
+    print(f"[INFO] Using weights: {weights_path}")
+    print(f"[INFO] Output directory: {output_dir}")
+    
+    evaluate_simulation(
+        x_path=args.x_path,
+        t_path=args.t_path,
+        weights_path=weights_path,
+        output_dir=output_dir,
+        device=args.device,
+        input_length=args.input_length
+    )
 
 

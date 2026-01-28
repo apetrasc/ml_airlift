@@ -1,10 +1,17 @@
+import os
+import sys
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import polars as pl
 from src import preprocess_and_predict, preprocess, debug_pipeline, get_valid_data
 from models import SimpleCNN, SimpleViTRegressor, ResidualCNN, BaseCNN, ProposedCNN
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 import yaml
 import math
 import argparse
