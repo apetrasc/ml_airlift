@@ -1,3 +1,11 @@
+import os
+import sys
+
+# プロジェクトルート（ml_airlift）をパスに追加（models / config を解決するため）
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_script_dir)
+sys.path.insert(0, _project_root)
+
 import torch
 import numpy as np
 import yaml
@@ -17,13 +25,13 @@ import hydra
 import datetime
 from omegaconf import OmegaConf
 
-@hydra.main(config_path="config", config_name="config.yaml")
+@hydra.main(config_path="../config", config_name="config.yaml", version_base=None)
 def main(cfg):
 
     # Get hydra run directory as base path for reading relative inputs
     base_dir = os.getcwd()
     # Create time-based output directory under /mnt/matsubara/outputs/YYYY-MM-DD/HH-MM-SS
-    outputs_root = "/mnt/matsubara/outputs"
+    outputs_root = cfg.training.outputs_root
     now = datetime.datetime.now()
     date_dir = now.strftime('%Y-%m-%d')
     run_dir = os.path.join(outputs_root, date_dir, now.strftime('%H-%M-%S'))
@@ -254,12 +262,17 @@ def main(cfg):
     plt.figure(figsize=(8, 8))
     plt.scatter(val_targets_np, val_predictions_np, alpha=0.6, marker='o', label='Predictions')
     plt.plot([0, 1], [0, 1], 'r--', label='Ideal (y=x)')
-    plt.title('Predicted vs Actual Values (Validation Set)')
-    plt.xlabel('Actual Value')
-    plt.ylabel('Predicted Value')
+    plt.title('Predicted vs Actual Values (Validation Set)', fontsize=18)
+    plt.xlabel('Actual Value', fontsize=16)
+    plt.ylabel('Predicted Value', fontsize=16)
     plt.xlim(0, 0.20)
     plt.ylim(0, 0.20)
-    plt.legend()
+    # 目盛りを 0.05 刻みにし、ラベルを大きく表示
+    tick_positions = np.arange(0, 0.21, 0.05)
+    plt.xticks(tick_positions, fontsize=18)
+    plt.yticks(tick_positions, fontsize=18)
+    plt.tick_params(axis='both', which='major', labelsize=18, length=8)
+    plt.legend(fontsize=14)
     plt.grid(True)
     plt.savefig(os.path.join(logs_dir, 'val_pred_vs_actual_scatter.png'))
     plt.show()

@@ -5,52 +5,93 @@ from scipy import signal
 import matplotlib.pyplot as plt
 import yaml
 import os
-def preprocess(x_raw, device, fs=None):
+
+
+def preprocess(x_raw, fs=None):
     """
-    Preprocess the input data for model prediction.
+    CPU-only preprocessing of raw input data for model prediction.
+
     This includes:
-    - Converting to torch tensor and moving to the specified device
-    - Applying the Hilbert transform (using hilbert_cuda)
-    - Handling NaN values
-    - Adding channel dimension
-    - Normalizing each (length, channel) column for each sample in the batch
-    - Applying log1p transformation
+    - Optional bandpass filtering (when fs is provided)
+    - Hilbert transform to obtain amplitude envelope
+    - Morphological erosion (moving minimum) via erode_signals
+    - NaN handling
 
     Args:
         x_raw (np.ndarray): Raw input data of shape (batch, length)
-        device (str or torch.device): Device to move tensors to
+        fs (float | None): Sampling frequency. If None, bandpass is skipped.
 
     Returns:
-        torch.Tensor: Preprocessed tensor ready for model input
+        np.ndarray: Preprocessed data on CPU with shape (batch, length)
     """
 
-    # fsの定義が必要
+    # バンドパスフィルタ（サンプリング周波数 fs が与えられている場合のみ適用）
+    # SciPy の butter に fs を渡す場合、Wn は [0, fs/2) の範囲である必要がある
     if fs is not None:
-        sos = signal.butter(N=16,Wn=[1e6,10e6],btype='bandpass',output='sos',fs=fs)
-        x_raw = signal.sosfiltfilt(sos,x_raw,axis=1)
+        # 1–10 MHz の帯域を想定したフィルタ
+        sos = signal.butter(
+            N=16,
+            Wn=[1e6, 10e6],
+            btype="bandpass",
+            output="sos",
+            fs=fs,
+        )
+        x_raw = signal.sosfiltfilt(sos, x_raw, axis=1)
+        print(f"bandpass exec@max: {np.max(x_raw)}")
+    else:
+        # fs が渡されていない場合はフィルタをスキップ（古い npz との互換のため）
+        print("WARNING: fs is None in preprocess; skipping bandpass filter.")
 
-    x_test = np.abs(signal.hilbert(x_raw,axis=1))
+    # Hilbert 変換で包絡線を計算
+    x_env = np.abs(signal.hilbert(x_raw, axis=1))
 
-    #x_test = erode_signals(x_test, window_size=30)
-    
-    if np.isnan(x_test).any():
+    # モルフォロジー的な侵食（移動最小値フィルタ）
+    x_env = erode_signals(x_env, window_size=30)
+
+    # NaN を安全な値に置き換え
+    if np.isnan(x_env).any():
         print("nan")
-        x_test = np.nan_to_num(x_test)
-    x_test_tensor = torch.from_numpy(x_test).float()
+        x_env = np.nan_to_num(x_env)
 
-    # Add channel dimension: (batch, 1, length, channel)
-    x_test_tensor_all = x_test_tensor.unsqueeze(1)
-    # Normalize each (length, channel) column for each sample in the batch
-    c=0
-    max_values_per_column = torch.max(x_test_tensor_all, dim=2, keepdim=True)[0]+c
+    return x_env
+
+
+def prepare_cnn_input(x_processed, device):
+    """
+    Convert preprocessed CPU numpy array into CNN input tensor.
+
+    Steps:
+    - Convert to torch.float32 tensor on CPU
+    - Add channel dimension: (batch, 1, length)
+    - Per-sample max normalization
+    - log1p transformation
+    - Move to the specified device
+
+    Args:
+        x_processed (np.ndarray): Preprocessed data of shape (batch, length)
+        device (str | torch.device): Target device for the tensor
+
+    Returns:
+        torch.Tensor: Tensor of shape (batch, 1, length) on the given device
+    """
+    # CPU 上でテンソル化
+    x_tensor = torch.from_numpy(x_processed).float()  # (batch, length)
+
+    # Add channel dimension: (batch, 1, length)
+    x_tensor = x_tensor.unsqueeze(1)
+
+    # Normalize each (length) column for each sample in the batch
+    c = 1.0
+    max_values_per_column = torch.max(x_tensor, dim=2, keepdim=True)[0]
     max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
-    x_test_tensor_all = x_test_tensor_all / max_values_per_column
+    x_tensor = x_tensor / (max_values_per_column * c)
 
-    # Use only the first channel for CNN input
-    x_test_tensor_cnn = x_test_tensor_all[:, :, :]
-    x_test_tensor_cnn = x_test_tensor_cnn.to(device)
-    x_test_tensor_cnn = torch.log1p(x_test_tensor_cnn)
-    return x_test_tensor_cnn
+    # log1p transformation
+    x_tensor = torch.log1p(x_tensor)
+    print(f"max: {torch.max(x_tensor)}")
+
+    # 指定されたデバイスへ転送
+    return x_tensor.to(device)
 
 
 def hilbert_cuda(img_data_torch, device):
@@ -110,16 +151,29 @@ def preprocess_and_predict(path, model, device, plot_index=80):
     """
 
     # Load and preprocess data
-    x_raw = np.load(path)["processed_data"][:,:,0]
+    data = np.load(path)
+    x_raw = data["processed_data"][:, :, 0]
+    # npz 内にサンプリング周波数 fs が含まれていれば取得してプリプロセスに渡す
+    fs = None
+    if "fs" in data:
+        try:
+            fs = data["fs"].item() if hasattr(data["fs"], "item") else float(data["fs"])
+        except Exception:
+            fs = None
     
     import os
     filename = os.path.basename(path)
     print(f"loading successful and processing {filename}..")
-    x_test_tensor_cnn = preprocess(x_raw, device)
+
+    # CPU-only preprocessing
+    x_processed = preprocess(x_raw, fs=fs)
+
+    # CNN 向けテンソルへ変換し、デバイスに載せる
+    x_test_tensor_cnn = prepare_cnn_input(x_processed, device)
+
     # Model prediction
     model.eval()
     with torch.no_grad():
-        x_test_tensor_cnn = x_test_tensor_cnn.to(device)
         predictions = model(x_test_tensor_cnn)
         mean, var = torch.mean(predictions), torch.var(predictions)
         print(f"mean: {mean}, var: {var}")
@@ -128,7 +182,7 @@ def preprocess_and_predict(path, model, device, plot_index=80):
         torch.cuda.empty_cache()
     return mean, var
 
-def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=5.0, full=True, pulse_index=0,vmin=0,vmax=1):    
+def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=5.0, full=True, pulse_index=0, vmin=0, vmax=1, max_pulses=None):    
     """
     Convert processed .npz signal data to PNG image.
     
@@ -148,6 +202,8 @@ def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=5.0,
         If True, visualize all pulses as an image. If False, visualize only one pulse waveform (default is True).
     pulse_index : int, optional
         Index of the pulse to visualize when full=False (default is 0).
+    max_pulses : int or None, optional
+        If set, use at most this many pulses (rows) in the image when full=True (default is None = no limit).
     
     Returns
     -------
@@ -187,6 +243,10 @@ def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=5.0,
         endid = int(h *end_time/total_time)
         print(f"endid: {endid}")
         img_data = img_data[:endid, start_idx:end_idx]
+        # 縦方向に max_pulses 本だけ使う（指定時のみ）
+        if max_pulses is not None:
+            img_data = img_data[:max_pulses, :]
+            print(f"using first {img_data.shape[0]} pulses (max_pulses={max_pulses})")
         # Apply Hilbert transform to each pulse in img_data along the time axis
         # The analytic signal is computed for each pulse (row) individually
         # ヒルベルト変換をtorchで実装する
@@ -214,8 +274,10 @@ def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=5.0,
         #print(t.shape)
         #print(np.max(img_data),np.min(img_data))
         print(f"img_data.shape: {img_data.shape}")
-        
-        plt.figure(figsize=(10, 100))
+        # 縦パルス数に応じて図の高さを調整（30パルスなら高さ10程度）
+        n_rows = img_data.shape[0]
+        fig_h = max(6, min(100, n_rows * 0.35))
+        plt.figure(figsize=(10, fig_h))
         #plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0]*1e6, t[-1]*1e6, img_data.shape[0]-0.5, -0.5],vmin=0,vmax=1)
         plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0]*1e6, t[-1]*1e6, img_data.shape[0]-0.5, -0.5],vmin=vmin,vmax=vmax)
         #plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0], t[-1], img_data.shape[0]-0.5, -0.5])
@@ -289,13 +351,24 @@ def debug_pipeline(base_dir, config_path, file_path):
     print("DEBUG: File exists:", os.path.exists(file_path))
 
     # Load the processed data
-    x_raw_bug = np.load(file_path)["processed_data"][:,:,0]
+    data = np.load(file_path)
+    x_raw_bug = data["processed_data"][:, :, 0]
+    # サンプリング周波数 fs が保存されていれば取得
+    fs = None
+    if "fs" in data:
+        try:
+            fs = data["fs"].item() if hasattr(data["fs"], "item") else float(data["fs"])
+        except Exception:
+            fs = None
     filename = os.path.basename(file_path)
     print(f"DEBUG: loading successful and processing {filename}..")
 
-    # Preprocess the data
-    x_debug = preprocess(x_raw_bug, config['evaluation']['device'])
-    x_debug = x_debug.cpu().numpy()
+    # CPU-only preprocessing
+    x_processed = preprocess(x_raw_bug, fs=fs)
+
+    # CNN 向けテンソルへ変換し、デバイスに載せる
+    x_debug_tensor = prepare_cnn_input(x_processed, config['evaluation']['device'])
+    x_debug = x_debug_tensor.detach().cpu().numpy()
     print(x_debug.shape)
     print(x_debug[100, :, :].shape)
 

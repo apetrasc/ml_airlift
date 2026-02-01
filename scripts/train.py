@@ -27,11 +27,20 @@ try:
 except ImportError:
     # Fallback to old location
     from src.evaluate_predictions import create_prediction_plots
+
+# Hydra は hydra-core を使うこと。誤って pip install hydra すると main が無いとエラーになる。
 import hydra
+if not hasattr(hydra, "main"):
+    raise ImportError(
+        "This script requires 'hydra-core', not the 'hydra' package. Run:\n"
+        "  pip uninstall hydra\n"
+        "  pip install hydra-core\n"
+        "Then run this script again."
+    )
 from omegaconf import OmegaConf
 
 
-@hydra.main(config_path="../config", config_name="config_real_updated.yaml", version_base=None)
+@hydra.main(config_path="../config", config_name="config_real.yaml", version_base=None)
 def main(cfg):
     """Main training function with Hydra configuration."""
     

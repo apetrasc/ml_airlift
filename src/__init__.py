@@ -18,6 +18,7 @@ if _utils_py_path.exists():
     npz2png = utils_module.npz2png
     preprocess_and_predict = utils_module.preprocess_and_predict
     preprocess = utils_module.preprocess
+    prepare_cnn_input = utils_module.prepare_cnn_input
     hilbert_cuda = utils_module.hilbert_cuda
     debug_pipeline = utils_module.debug_pipeline
     get_valid_data = utils_module.get_valid_data
@@ -30,6 +31,7 @@ __all__ = [
     'npz2png',
     'preprocess_and_predict',
     'preprocess',
+    'prepare_cnn_input',
     'debug_pipeline',
     'get_valid_data',
     'npz2png'

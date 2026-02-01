@@ -1,4 +1,12 @@
-from src import preprocess_and_predict, preprocess, npz2png
+import os
+import sys
+from pathlib import Path
+
+# プロジェクトルート（ml_airlift）をパスに追加
+_project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_project_root))
+
+from src import preprocess_and_predict, preprocess, npz2png, prepare_cnn_input
 from models import SimpleCNN, SimpleViTRegressor, ResidualCNN
 import torch
 import numpy as np
@@ -217,8 +225,18 @@ x_npz = np.load(file_path)
 x_raw = x_npz["processed_data"][:, :, 0]
 sample_index = 1000
 
-# Apply preprocessing to match training pipeline
-x_processed_tensor = preprocess(x_raw, device)
+# Apply preprocessing to match training pipeline (CPU only)
+fs = None
+if "fs" in x_npz:
+    try:
+        fs = x_npz["fs"].item() if hasattr(x_npz["fs"], "item") else float(x_npz["fs"])
+    except Exception:
+        fs = None
+
+x_processed = preprocess(x_raw, fs=fs)
+
+# CNN 入力テンソルへ変換（正規化・log1p・デバイス転送）
+x_processed_tensor = prepare_cnn_input(x_processed, device)
 x_processed_numpy = x_processed_tensor.squeeze(1).detach().cpu().numpy()
 
 gradcam_output_dir = os.path.join(base_dir, "gradcam_outputs")
@@ -372,4 +390,4 @@ plt.savefig(os.path.join(gradcam_output_dir, f'gradcam_{sample_index}.png'))
 plt.close()
 
 mean, var = preprocess_and_predict(file_path, model, device=config['evaluation']['device'])
-npz2png(file_path, gradcam_output_dir,vmin=0,vmax=0.05)
+npz2png(file_path, gradcam_output_dir, vmin=0, vmax=0.05, max_pulses=30)
