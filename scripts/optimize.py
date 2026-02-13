@@ -67,9 +67,6 @@ from omegaconf import OmegaConf, DictConfig
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Load config using OmegaConf to enable attribute access
-config = OmegaConf.load('config/config_real.yaml')
-
 # Import functions from new module structure
 from src.data.loaders import (
     load_npz_pair,
@@ -88,10 +85,45 @@ except ImportError:
     # Fallback to old location
     from src.evaluate_predictions import create_prediction_plots
 
-# Paths
-OPTUNA_DIR = os.path.join(config.output.model_save_dir, 'optuna')
-OUTPUTS_ROOT = os.path.join(config.output.model_save_dir, 'optuna', 'runs')
-BASE_CONFIG_PATH = 'config/config_real.yaml'
+# Config path (config.yaml をベースに train.real / train.sim から設定を解決)
+BASE_CONFIG_PATH = 'config/config.yaml'
+
+
+def load_config_from_yaml(config_path: str, mode: str = "real") -> DictConfig:
+    """
+    config.yaml を読み込み、train.{mode} + eval.{mode} からフラットな設定を構築して返す。
+    train.py と同じ解決ロジック。
+    base を含め ${base.base_dir} のパス補間が正しく動くようにする。
+    """
+    cfg_raw = OmegaConf.load(config_path)
+    active = cfg_raw.train[mode]
+    eval_cfg = cfg_raw.eval[mode]
+
+    cfg = OmegaConf.create({
+        "base": cfg_raw.get("base", {}),
+        "dataset": active.dataset,
+        "model": active.model,
+        "data_split": active.data_split,
+        "output": active.output,
+        "logging": active.logging,
+        "evaluation": eval_cfg,
+    })
+    if mode == "sim" and "hyperparameters" in active:
+        hp = active.hyperparameters
+        cfg.training = OmegaConf.merge(active.training, {
+            "epochs": hp.get("num_epochs", 700),
+            "batch_size": hp.get("batch_size", 16),
+            "learning_rate": hp.get("learning_rate", 0.001),
+            "seed": hp.get("seed", 2324235),
+        })
+    else:
+        cfg.training = active.training
+    return cfg
+
+
+# Paths (load_config_from_yaml で初期化、main() で mode 確定後に設定)
+OPTUNA_DIR = None  # main() で設定
+OUTPUTS_ROOT = None  # main() で設定
 
 # Epoch range configuration
 # Change these values to create a new study for different epoch ranges
@@ -675,7 +707,7 @@ def save_trial_results(trial: Trial, cfg: DictConfig, output_dir: str,
     print(f"[OK] Trial {trial.number} results saved to {output_dir}")
 
 
-def objective(trial: Trial, base_config_path: str) -> float:
+def objective(trial: Trial, base_config_path: str, mode: str = "real") -> float:
     """
     Optuna objective function.
     
@@ -692,6 +724,7 @@ def objective(trial: Trial, base_config_path: str) -> float:
     Args:
         trial: Optuna trial object
         base_config_path: Path to base configuration file
+        mode: "real" or "sim" (config.yaml の train.{mode} を使用)
     
     Returns:
         Validation loss (optimization target)
@@ -711,8 +744,8 @@ def objective(trial: Trial, base_config_path: str) -> float:
     
     t0 = time.time()
     
-    # 1. Load base configuration
-    base_cfg = OmegaConf.load(base_config_path)
+    # 1. Load base configuration (config.yaml から train.{mode} + eval.{mode} を解決)
+    base_cfg = load_config_from_yaml(base_config_path, mode=mode)
     
     # 2. Suggest hyperparameters
     cfg = suggest_hyperparameters(trial, base_cfg)
@@ -745,11 +778,13 @@ def objective(trial: Trial, base_config_path: str) -> float:
         try:
             # 4. Load and preprocess data
             print("[STEP] Loading dataset files...")
+            x_key = OmegaConf.select(cfg.dataset, "x_key", default=None)
+            t_key = OmegaConf.select(cfg.dataset, "t_key", default=None)
             x, t = load_npz_pair(
-            cfg.dataset.x_train, 
-            cfg.dataset.t_train, 
-                cfg.dataset.x_key, 
-                cfg.dataset.t_key
+                cfg.dataset.x_train,
+                cfg.dataset.t_train,
+                x_key,
+                t_key
             )
             print(f"[OK] Loaded. x.shape={x.shape}, t.shape={t.shape}")
             
@@ -1082,7 +1117,7 @@ def generate_study_summary(study: optuna.Study, output_dir: str):
     print(f"[OK] Study summary saved to {summary_path}")
 
 
-def generate_study_name(base_config_path: str, epoch_min: int = None, epoch_max: int = None) -> str:
+def generate_study_name(base_config_path: str, epoch_min: int = None, epoch_max: int = None, mode: str = "real") -> str:
     """
     Generate study name based on configuration to avoid mixing different experimental settings.
     
@@ -1090,11 +1125,12 @@ def generate_study_name(base_config_path: str, epoch_min: int = None, epoch_max:
         base_config_path: Path to base configuration file
         epoch_min: Minimum epoch value (e.g., 100)
         epoch_max: Maximum epoch value (e.g., 300)
+        mode: "real" or "sim" (config.yaml の train.{mode} を使用)
     
     Returns:
         Study name string
     """
-    cfg = OmegaConf.load(base_config_path)
+    cfg = load_config_from_yaml(base_config_path, mode=mode)
     
     # Extract key settings that affect results
     in_channels = cfg.model.get('in_channels', 4)
@@ -1118,6 +1154,19 @@ def main():
     """
     Main function to run Optuna optimization.
     """
+    import argparse
+    parser = argparse.ArgumentParser(description="Optuna hyperparameter optimization")
+    parser.add_argument('--mode', type=str, default='real', choices=['real', 'sim'],
+                        help='Dataset mode: real or sim (default: real)')
+    args = parser.parse_args()
+    mode = args.mode
+
+    # Load config and set paths
+    config = load_config_from_yaml(BASE_CONFIG_PATH, mode=mode)
+    global OPTUNA_DIR, OUTPUTS_ROOT
+    OPTUNA_DIR = os.path.join(config.output.model_save_dir, 'optuna')
+    OUTPUTS_ROOT = os.path.join(config.output.model_save_dir, 'optuna', 'runs')
+
     # Create Optuna directory
     os.makedirs(OPTUNA_DIR, exist_ok=True)
     
@@ -1131,7 +1180,7 @@ def main():
     # Generate study name based on configuration
     # This ensures different experimental settings use different studies
     # Epoch range is included to distinguish studies with different training durations
-    study_name = generate_study_name(BASE_CONFIG_PATH, epoch_min=EPOCH_MIN, epoch_max=EPOCH_MAX)
+    study_name = generate_study_name(BASE_CONFIG_PATH, epoch_min=EPOCH_MIN, epoch_max=EPOCH_MAX, mode=mode)
     print(f"[INFO] Generated study name: {study_name}")
     print(f"[INFO] This ensures different settings (channels, dataset, epoch range, etc.) use separate studies")
     print(f"[INFO] Epoch range: {EPOCH_MIN}-{EPOCH_MAX} (step={EPOCH_STEP})")
@@ -1190,10 +1239,11 @@ def main():
     
     # Optimize
     print(f"[INFO] Starting optimization...")
-    print(f"[INFO] Base config: {BASE_CONFIG_PATH}\n")
+    print(f"[INFO] Base config: {BASE_CONFIG_PATH}")
+    print(f"[INFO] Mode: {mode}\n")
     
     study.optimize(
-        lambda trial: objective(trial, BASE_CONFIG_PATH),
+        lambda trial: objective(trial, BASE_CONFIG_PATH, mode),
         n_trials=20,  # Adjust as needed
         n_jobs=1,      # Set to 1 for GPU usage, increase for parallel CPU trials
         show_progress_bar=True

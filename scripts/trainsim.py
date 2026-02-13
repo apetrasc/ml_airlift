@@ -22,26 +22,40 @@ from src import npz2png
 from torch.nn import init
 
 import hydra
+from hydra.core.hydra_config import HydraConfig
 import datetime
 from omegaconf import OmegaConf
+from matplotlib.gridspec import GridSpec
+
+# trainsim は常に mode=sim を使用（config フォルダに追加ファイルを作らないため）
+if "mode=" not in " ".join(sys.argv):
+    sys.argv.append("mode=sim")
 
 @hydra.main(config_path="../config", config_name="config.yaml", version_base=None)
 def main(cfg):
+    # Resolve config from config.yaml structure (trainsim uses train.sim + eval.sim)
+    # base を含め ${base.base_dir} のパス補間が正しく動くようにする
+    active = cfg.train.sim
+    eval_cfg = cfg.eval.sim
+    cfg = OmegaConf.create({
+        "base": cfg.get("base", {}),
+        "dataset": active.dataset,
+        "model": active.model,
+        "hyperparameters": active.hyperparameters,
+        "training": active.training,
+        "evaluation": eval_cfg,
+    })
 
-    # Get hydra run directory as base path for reading relative inputs
-    base_dir = os.getcwd()
-    # Create time-based output directory under /mnt/matsubara/outputs/YYYY-MM-DD/HH-MM-SS
-    outputs_root = cfg.training.outputs_root
-    now = datetime.datetime.now()
-    date_dir = now.strftime('%Y-%m-%d')
-    run_dir = os.path.join(outputs_root, date_dir, now.strftime('%H-%M-%S'))
+    # Hydra が作成した出力ディレクトリを使用（hydra.job.chdir=False でも正しく取得）
+    # 参照: https://hydra.cc/docs/tutorials/basic/running_your_app/working_directory
+    run_dir = HydraConfig.get().runtime.output_dir
     logs_dir = os.path.join(run_dir, "logs")
     os.makedirs(logs_dir, exist_ok=True)
     print(f"Run directory: {os.path.abspath(run_dir)}")
     print(f"Logs will be saved under: {os.path.abspath(logs_dir)}")
     # Load config (already loaded as cfg)
-    x_train = np.load(os.path.relpath(cfg.dataset.x_train, base_dir))
-    t_train = np.load(os.path.relpath(cfg.dataset.t_train, base_dir))
+    x_train = np.load(cfg.dataset.x_train)
+    t_train = np.load(cfg.dataset.t_train)
 
     x_train_tensor = torch.from_numpy(x_train).float()
     t_train_tensor = torch.from_numpy(t_train).float()
@@ -288,16 +302,17 @@ def main(cfg):
         num_kernels = kernels.shape[0]
         num_channels = kernels.shape[1]
         kernel_size = kernels.shape[2]
-        plt.figure(figsize=(num_kernels * 2, 2 * num_channels))
+        fig_h = max(4, num_kernels * 0.5)
+        plt.figure(figsize=(min(num_kernels * 2, 24), fig_h * num_channels))
         for i in range(num_kernels):
             for j in range(num_channels):
                 plt.subplot(num_kernels, num_channels, i * num_channels + j + 1)
                 plt.plot(kernels[i, j, :])
-                plt.title(f'Kernel {i}, Channel {j}')
+                plt.title(f'Kernel {i}, Channel {j}', fontsize=8)
                 plt.axis('tight')
                 plt.grid(True)
         plt.suptitle('First Conv1d Layer Kernels')
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
         plt.savefig(os.path.join(logs_dir, 'kernels.png'))
         plt.show()
     else:
@@ -363,6 +378,47 @@ def main(cfg):
         sample_input.requires_grad_(True)
         grad_cam_map = grad_cam_1d(sample_input)
         grad_cam_1d.remove_hooks()
+
+        # 1パルス分をこれまでの形式（左=Original, 中央=Saliency, 右=Overlay）で画像化
+        processed_signal = sample_input.detach().squeeze().cpu().numpy()  # (L,)
+        grad_cam_map_np = np.asarray(grad_cam_map)
+        processed_2d = processed_signal.reshape(1, -1)
+        grad_cam_2d = grad_cam_map_np.reshape(1, -1)
+        grad_cam_scaled = (grad_cam_2d - grad_cam_2d.min()) / (grad_cam_2d.max() - grad_cam_2d.min() + 1e-8)
+
+        fig = plt.figure(figsize=(14, 4))
+        gs = GridSpec(1, 3, figure=fig, width_ratios=[1, 1, 1], wspace=0.6)
+
+        ax0 = fig.add_subplot(gs[0, 0])
+        im0 = ax0.imshow(processed_2d, aspect='auto', interpolation='nearest', cmap='jet', vmin=0.0, vmax=0.10)
+        ax0.set_title('Original', fontsize=18)
+        ax0.set_xlabel('Time Axis', fontsize=14)
+        ax0.set_ylabel('Sample', fontsize=14)
+        ax0.set_yticks([])
+        plt.colorbar(im0, ax=ax0, fraction=0.046, pad=0.04, label='Intensity')
+
+        ax1 = fig.add_subplot(gs[0, 1])
+        im1 = ax1.imshow(grad_cam_scaled, aspect='auto', interpolation='nearest', cmap='jet', vmin=0, vmax=1)
+        ax1.set_title('Saliency', fontsize=18)
+        ax1.set_xlabel('Time Axis', fontsize=14)
+        ax1.set_ylabel('Sample', fontsize=14)
+        ax1.set_yticks([])
+        plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04, label='Saliency')
+
+        ax2 = fig.add_subplot(gs[0, 2])
+        ax2.imshow(processed_2d, aspect='auto', interpolation='nearest', cmap='jet', alpha=1.0, vmin=0, vmax=0.10)
+        im2 = ax2.imshow(grad_cam_scaled, aspect='auto', interpolation='nearest', cmap='jet', alpha=0.5, vmin=0, vmax=1)
+        ax2.set_title('Overlay', fontsize=18)
+        ax2.set_xlabel('Time Axis', fontsize=14)
+        ax2.set_ylabel('Sample', fontsize=14)
+        ax2.set_yticks([])
+        plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04, label='Saliency')
+
+        plt.tight_layout(pad=1.2)
+        plt.savefig(os.path.join(logs_dir, 'gradcam_signal_overlay.png'), bbox_inches='tight')
+        plt.close()
+        print(f"Saved: {os.path.join(logs_dir, 'gradcam_signal_overlay.png')}")
+
         plt.figure(figsize=(10, 4))
         plt.plot(grad_cam_map)
         plt.title('Grad-CAM Map for Sample Input (Conv1d)')

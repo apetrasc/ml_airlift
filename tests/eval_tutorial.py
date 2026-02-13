@@ -6,7 +6,7 @@ from pathlib import Path
 _project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_project_root))
 
-from src import preprocess_and_predict, preprocess, npz2png, prepare_cnn_input
+from src import preprocess, npz2png, prepare_cnn_input
 from models import SimpleCNN, SimpleViTRegressor, ResidualCNN
 import torch
 import numpy as np
@@ -21,7 +21,7 @@ with open('config/config.yaml', 'r') as f:
     config = yaml.safe_load(f)
 
 base_dir = "/home/smatsubara/documents/airlift/data/sandbox/visualize"
-file_path = "/home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid/P20241007-1112_processed.npz"
+file_path = "/home/smatsubara/documents/airlift/data/experiments/processed/all/P20240726-1606_processed.npz"
 device = config["evaluation"]["device"]
 
 parser = argparse.ArgumentParser(description="Run evaluation with specified base directory (datetime).")
@@ -42,6 +42,33 @@ model.load_state_dict(
     )
 )
 model.eval()
+
+PAD_LEFT_DIM = 100
+
+
+def apply_inference_shift(tensor, input_length):
+    """
+    推論用シフト: 最後の次元が input_length のテンソルに対し、
+    先頭に PAD_LEFT_DIM 個の0を付け、末尾 PAD_LEFT_DIM 個を削除した 2500 次元にして返す。
+    実質 [0]*50 + x[0:2450] となる。
+    """
+    pad_left = PAD_LEFT_DIM
+    keep_len = input_length - pad_left  # 2450
+    if tensor.dim() == 3:
+        # (B, C, L) → 先頭50ゼロ + [:, :, :2450]
+        zeros_front = torch.zeros(
+            tensor.shape[0], tensor.shape[1], pad_left,
+            device=tensor.device, dtype=tensor.dtype,
+        )
+        return torch.cat([zeros_front, tensor[:, :, :keep_len]], dim=2)
+    elif tensor.dim() == 2:
+        zeros_front = torch.zeros(
+            tensor.shape[0], pad_left,
+            device=tensor.device, dtype=tensor.dtype,
+        )
+        return torch.cat([zeros_front, tensor[:, :keep_len]], dim=1)
+    else:
+        return tensor
 
 
 class GradCAM1d:
@@ -136,6 +163,9 @@ def preprocess_for_gradcam(processed_data, sample_index=500, target_length=None)
             signal = signal[:target_length]
     
     signal = signal.unsqueeze(0).unsqueeze(0)  # [1, 1, L]
+    # 推論用シフト: 先頭50次元ゼロパディング、末尾50次元削除
+    if target_length is not None and signal.shape[-1] == target_length:
+        signal = apply_inference_shift(signal, target_length)
     
     #print(f'shape of signal {signal.shape}')
     return signal, original_length
@@ -201,6 +231,10 @@ def preprocess_batch_for_gradcam(
             batch_tensor[idx, 0, :] = sample_tensor[:target_length]
         else:
             batch_tensor[idx, 0, :length] = sample_tensor
+
+    # 推論用シフト: 先頭50次元ゼロパディング、末尾50次元削除
+    if target_length is not None and batch_tensor.shape[-1] == target_length:
+        batch_tensor = apply_inference_shift(batch_tensor, target_length)
 
     return batch_tensor, original_lengths
 
@@ -308,86 +342,135 @@ global_max = grad_cam_map_full.max()
 scale_denominator = global_max if global_max > 1e-8 else 1.0
 grad_cam_map_full_scaled = grad_cam_map_full / scale_denominator
 print(f"x_raw.shape: {x_raw.shape}")
-# Align x_raw to match Grad-CAM width and normalise for overlay
-if x_raw.shape[1] >= max_length:
-    x_raw_aligned = x_raw[:, :max_length]
+# 左・Overlay は「パディング後（推論時シフト適用後）」のモデル入力を表示する
+# 各行: 先頭50ゼロ + 元データの先頭2450次元 → 長さ2500
+pad_left = PAD_LEFT_DIM
+keep_len = target_len - pad_left  # 2450
+x_processed_shifted = np.zeros((x_processed_numpy.shape[0], target_len), dtype=x_processed_numpy.dtype)
+for i in range(x_processed_numpy.shape[0]):
+    row = x_processed_numpy[i]
+    if len(row) >= target_len:
+        row_2500 = row[:target_len].copy()
+    else:
+        row_2500 = np.pad(row, (0, target_len - len(row)), mode='constant', constant_values=0)
+    # シフト: [0]*50 + row_2500[0:2450]
+    x_processed_shifted[i, pad_left:target_len] = row_2500[:keep_len]
+# 表示用に max_length に合わせてアラインメント（2500 より長い場合は右をゼロパッド）
+if max_length <= target_len:
+    x_processed_aligned = x_processed_shifted[:, :max_length].copy()
 else:
-    pad_width = max_length - x_raw.shape[1]
-    x_raw_aligned = np.pad(x_raw, ((0, 0), (0, pad_width)), mode='constant')
-
-x_raw_min = np.min(x_raw_aligned)
-x_raw_max = np.max(x_raw_aligned)
-if x_raw_max - x_raw_min < 1e-8:
-    x_raw_norm = np.zeros_like(x_raw_aligned)
-else:
-    x_raw_norm = (x_raw_aligned - x_raw_min) / (x_raw_max - x_raw_min)
+    x_processed_aligned = np.pad(
+        x_processed_shifted, ((0, 0), (0, max_length - target_len)), mode='constant', constant_values=0
+    )
 
 # Save grad_cam_map_full as an image (each row as one sample)
+# 重ねる前はガンマ補正で色を強くする（オーバーレイはそのまま）
+gamma_full = 0.6
+grad_cam_display = np.power(np.clip(grad_cam_map_full_scaled, 0, 1), gamma_full)
 plt.figure(figsize=(12, 8))
 im_full = plt.imshow(
     grad_cam_map_full_scaled,
     aspect='auto',
     interpolation='nearest',
-    cmap='viridis',
+    cmap='jet',
     vmin=0.0,
     vmax=1.0,
 )
 clb_full = plt.colorbar(im_full)
-clb_full.set_label('Grad-CAM Saliency (scaled)', rotation=270, labelpad=15)
-plt.title('Full Grad-CAM map for all samples')
-plt.xlabel('Time Axis')
-plt.ylabel('Sample Index')
+clb_full.set_label('Saliency', rotation=270, labelpad=15, fontsize=22)
+clb_full.ax.tick_params(labelsize=18)
+plt.title('Full Grad-CAM map for all samples', fontsize=22)
+plt.xlabel('Time Axis', fontsize=20)
+plt.ylabel('Sample Index', fontsize=20)
+plt.tick_params(axis='both', which='major', labelsize=18)
 plt.tight_layout()
 plt.savefig(os.path.join(gradcam_output_dir, 'gradcam_full_fast2.png'))
 plt.close()
 
-# Overlay Grad-CAM heatmap and the normalised raw signal
-plt.figure(figsize=(12, 8))
-im_overlay = plt.imshow(
-    grad_cam_map_full_scaled,
-    aspect='auto',
-    interpolation='nearest',
-    cmap='viridis',
-    alpha=0.7,
-    vmin=0.0,
-    vmax=0.001,
-)
-plt.imshow(
-    x_raw_norm,
-    aspect='auto',
-    interpolation='nearest',
-    cmap='Greys',
-    alpha=0.25,
-)
-clb_overlay = plt.colorbar(im_overlay)
-clb_overlay.set_label('Grad-CAM Saliency (scaled)', rotation=270, labelpad=15)
-plt.title('Grad-CAM Overlay with Raw Signal')
-plt.xlabel('Time Axis')
-plt.ylabel('Sample Index')
-plt.tight_layout()
-plt.savefig(os.path.join(gradcam_output_dir, 'gradcam_signal_overlay.png'))
+# 3列表示: 左=元画像, 中央=Saliency, 右=Overlay（visualize_sample_gradcam と同じ構成）
+from matplotlib.gridspec import GridSpec
+fig = plt.figure(figsize=(18, 8))
+gs = GridSpec(1, 3, figure=fig, width_ratios=[1, 1, 1], wspace=0.6)
+
+# 左: 元画像＝モデル入力（前処理済み、gradcam_1000 の processed_signal と同じ）— 0–0.10 で jet
+ax0 = fig.add_subplot(gs[0, 0])
+im0 = ax0.imshow(x_processed_aligned, aspect='auto', interpolation='nearest', cmap='jet', vmin=0.0, vmax=0.10)
+ax0.set_title('Original', fontsize=20)
+ax0.set_xlabel('Time Axis', fontsize=18)
+ax0.set_ylabel('Sample Index', fontsize=18)
+ax0.tick_params(axis='both', labelsize=16)
+cb0 = plt.colorbar(im0, ax=ax0, fraction=0.046, pad=0.04, label='Intensity')
+cb0.ax.tick_params(labelsize=14)
+
+# 中央: Saliency（Grad-CAM のみ）
+ax1 = fig.add_subplot(gs[0, 1])
+im1 = ax1.imshow(grad_cam_map_full_scaled, aspect='auto', interpolation='nearest', cmap='jet', vmin=0, vmax=1)
+ax1.set_title('Saliency', fontsize=20)
+ax1.set_xlabel('Time Axis', fontsize=18)
+ax1.set_ylabel('Sample Index', fontsize=18)
+ax1.tick_params(axis='both', labelsize=16)
+cb1 = plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04, label='Saliency')
+cb1.ax.tick_params(labelsize=14)
+
+# 右: Overlay（前処理済みベース + Saliency 半透明、gradcam_1000 とスケール一致）
+ax2 = fig.add_subplot(gs[0, 2])
+ax2.imshow(x_processed_aligned, aspect='auto', interpolation='nearest', cmap='jet', alpha=1.0, vmin=0, vmax=0.10)
+im2 = ax2.imshow(grad_cam_map_full_scaled, aspect='auto', interpolation='nearest', cmap='jet', alpha=0.5, vmin=0, vmax=1)
+ax2.set_title('Overlay', fontsize=20)
+ax2.set_xlabel('Time Axis', fontsize=18)
+ax2.set_ylabel('Sample Index', fontsize=18)
+ax2.tick_params(axis='both', labelsize=16)
+cb2 = plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04, label='Saliency')
+cb2.ax.tick_params(labelsize=14)
+
+plt.tight_layout(pad=1.2)
+plt.savefig(os.path.join(gradcam_output_dir, 'gradcam_signal_overlay.png'), bbox_inches='tight')
 plt.close()
 
 if not os.path.exists(gradcam_output_dir):
     os.makedirs(gradcam_output_dir)
 plt.figure(figsize=(10, 4))
-plt.rcParams['font.size'] = 16
 processed_signal = x_processed_numpy[sample_index, :]
 n_samples = processed_signal.shape[0]
 t = np.arange(n_samples)
 plt.plot(t, processed_signal,
          color='blue', label='Processed Signal')
 plt.plot(t, grad_cam_map, color='red', label='Saliency-Map')
-plt.legend()
+plt.legend(fontsize=18)
 plt.fill_between(t, grad_cam_map,
          color='red', alpha=0.1)
-plt.title('Saliency-Map for Sample Input (Conv1d)')
-plt.xlabel('Time Axis')
-plt.ylabel('Amplitude')
+plt.title('Saliency-Map for Sample Input (Conv1d)', fontsize=22)
+plt.xlabel('Time Axis', fontsize=20)
+plt.ylabel('Amplitude', fontsize=20)
+plt.tick_params(axis='both', which='major', labelsize=18)
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(os.path.join(gradcam_output_dir, f'gradcam_{sample_index}.png'))
 plt.close()
 
-mean, var = preprocess_and_predict(file_path, model, device=config['evaluation']['device'])
-npz2png(file_path, gradcam_output_dir, vmin=0, vmax=0.05, max_pulses=30)
+# 推論時シフトを適用するため、自前で読み込み・前処理・シフト・推論を行う
+data_for_pred = np.load(file_path)
+x_raw_pred = data_for_pred["processed_data"][:, :, 0]
+fs_pred = None
+if "fs" in data_for_pred:
+    try:
+        fs_pred = data_for_pred["fs"].item() if hasattr(data_for_pred["fs"], "item") else float(data_for_pred["fs"])
+    except Exception:
+        fs_pred = None
+x_processed_pred = preprocess(x_raw_pred, fs=fs_pred)
+x_test_tensor_cnn = prepare_cnn_input(x_processed_pred, config["evaluation"]["device"])
+input_len = config["hyperparameters"]["input_length"]
+# 長さを input_length に揃えてからシフト適用（先頭50ゼロ、末尾50削除）
+if x_test_tensor_cnn.shape[-1] > input_len:
+    x_test_tensor_cnn = x_test_tensor_cnn[:, :, :input_len]
+elif x_test_tensor_cnn.shape[-1] < input_len:
+    pad_size = input_len - x_test_tensor_cnn.shape[-1]
+    x_test_tensor_cnn = torch.nn.functional.pad(x_test_tensor_cnn, (0, pad_size), mode="constant", value=0)
+if x_test_tensor_cnn.shape[-1] == input_len:
+    x_test_tensor_cnn = apply_inference_shift(x_test_tensor_cnn, input_len)
+model.eval()
+with torch.no_grad():
+    predictions = model(x_test_tensor_cnn)
+    mean, var = torch.mean(predictions), torch.var(predictions)
+    print(f"mean: {mean}, var: {var}")
+npz2png(file_path, gradcam_output_dir, vmin=0, vmax=0.05, max_pulses=60)

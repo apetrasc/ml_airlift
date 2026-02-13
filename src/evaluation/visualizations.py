@@ -9,6 +9,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 import argparse
+import yaml
+from pathlib import Path
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
 
@@ -104,23 +106,24 @@ def create_individual_plots(y_pred: np.ndarray, y_true: np.ndarray,
         max_val = max(np.max(true_i), np.max(pred_i))
         ax.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Perfect Prediction')
         
-        # Set labels and title
-        ax.set_xlabel('Ground Truth', fontsize=12)
-        ax.set_ylabel('Predicted Value', fontsize=12)
+        # Set labels and title (larger fonts for readability)
+        ax.set_xlabel('Ground Truth', fontsize=16)
+        ax.set_ylabel('Predicted Value', fontsize=16)
         ax.set_title(f'{target_names[i]} - Prediction vs Ground Truth\n'
                     f'R² = {metric["r2"]:.4f}, RMSE = {metric["rmse"]:.4f}, MAE = {metric["mae"]:.4f}',
-                    fontsize=12)
+                    fontsize=16)
+        ax.tick_params(axis='both', labelsize=18)
         
         # Add grid
         ax.grid(True, alpha=0.3)
-        ax.legend()
+        ax.legend(fontsize=14)
         
         # Set equal aspect ratio
         ax.set_aspect('equal', adjustable='box')
         
         # Add statistics text box
         stats_text = f'R² = {metric["r2"]:.4f}\nRMSE = {metric["rmse"]:.4f}\nMAE = {metric["mae"]:.4f}\nMSE = {metric["mse"]:.4f}'
-        ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=10,
+        ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=14,
                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
         
         plt.tight_layout()
@@ -158,12 +161,13 @@ def create_overview_plot(y_pred: np.ndarray, y_true: np.ndarray,
         max_val = max(np.max(true_i), np.max(pred_i))
         ax.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=1.5, label='y=x')
         
-        # Set labels and title
-        ax.set_xlabel('Ground Truth', fontsize=10)
-        ax.set_ylabel('Predicted', fontsize=10)
-        ax.set_title(f'{target_names[i]}\nR²={metric["r2"]:.3f}, RMSE={metric["rmse"]:.3f}', fontsize=10)
+        # Set labels and title (larger fonts for readability)
+        ax.set_xlabel('Ground Truth', fontsize=16)
+        ax.set_ylabel('Predicted', fontsize=16)
+        ax.set_title(f'{target_names[i]}\nR²={metric["r2"]:.3f}, RMSE={metric["rmse"]:.3f}', fontsize=14)
+        ax.tick_params(axis='both', labelsize=16)
         ax.grid(True, alpha=0.3)
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=12)
         
         # Set equal aspect ratio
         ax.set_aspect('equal', adjustable='box')
@@ -246,9 +250,10 @@ def create_residual_plots(y_pred: np.ndarray, y_true: np.ndarray,
         ax.scatter(true_i, residuals, alpha=0.6, s=20, color='red', edgecolors='black', linewidth=0.3)
         ax.axhline(y=0, color='black', linestyle='--', linewidth=1)
         
-        ax.set_xlabel('Ground Truth', fontsize=10)
-        ax.set_ylabel('Residuals (Pred - True)', fontsize=10)
-        ax.set_title(f'{target_names[i]} - Residuals', fontsize=10)
+        ax.set_xlabel('Ground Truth', fontsize=16)
+        ax.set_ylabel('Residuals (Pred - True)', fontsize=16)
+        ax.set_title(f'{target_names[i]} - Residuals', fontsize=14)
+        ax.tick_params(axis='both', labelsize=16)
         ax.grid(True, alpha=0.3)
     
     # Hide unused subplots
@@ -265,6 +270,8 @@ def create_residual_plots(y_pred: np.ndarray, y_true: np.ndarray,
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluate model predictions')
+    parser.add_argument('--run_dir', type=str, default=None,
+                       help='Run directory containing y_pred.npy, y_true.npy, config.yaml (overrides pred_path, truth_path, output_dir, target_names from config)')
     parser.add_argument('--pred_path', 
                        default='/home/smatsubara/documents/airlift/data/outputs_real/simple/y_pred.npy',
                        help='Path to prediction file')
@@ -281,6 +288,18 @@ def main():
                        help='Create residual plots as well')
     
     args = parser.parse_args()
+    
+    if args.run_dir:
+        run_dir = Path(args.run_dir)
+        args.pred_path = str(run_dir / 'y_pred.npy')
+        args.truth_path = str(run_dir / 'y_true.npy')
+        args.output_dir = str(run_dir / 'evaluation_plots')
+        config_path = run_dir / 'config.yaml'
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                cfg = yaml.safe_load(f)
+            args.target_names = cfg.get('evaluation', {}).get('target_names', args.target_names)
+        print(f"[INFO] Using run_dir: {run_dir}")
     
     # Load data
     print("Loading prediction and ground truth data...")

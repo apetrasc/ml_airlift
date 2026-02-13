@@ -1,28 +1,124 @@
-hyperparameters:
-  learning_rate: 0.001
-  num_epochs: 700
-  batch_size: 16
-  input_length: 2500
-  seed: 2324235
-  l1_lambda: 1.0e-7
-  l2_lambda: 1.0e-7
-dataset:
-  x_train: /home/smatsubara/documents/airlift/data/simulation/dataset/x_train.npy
-  t_train: /home/smatsubara/documents/airlift/data/simulation/dataset/t_train.npy
-training:
-  device: cuda:1
-  pretrained_path : models/layernorm/weights/model.pth
-  outputs_root: /home/smatsubara/documents/airlift/data/outputs
-evaluation:
-  target_variables_path: /home/smatsubara/documents/airlift/data/experiments/target_valiables.csv
-  processed_dir: /home/smatsubara/documents/airlift/data/experiments/processed/solid_liquid
-  save_csv_path: /home/smatsubara/documents/airlift/data/outputs/
-  device: cuda:0
-  tmp_path: /home/smatsubara/documents/airlift/data/tmp
-  results_path: /home/smatsubara/documents/airlift/data/results
+# Unified configuration file merging both simulation and real dataset settings, 
+# organized under training and evaluation sections for each dataset type.
+# Override with: python train.py mode=real  or  python train.py mode=sim
+mode: real
+
+base:
+  base_dir: /home/smatsubara/documents/airlift/assets
+
+# ============================
+# SIM vs REAL DATASET SETTINGS
+# ============================
+train:
+  sim:
+    dataset:
+      # base.base_dir からの相対パス
+      x_train: ${base.base_dir}/datasets/simulation/dataset/x_train.npy
+      t_train: ${base.base_dir}/datasets/simulation/dataset/t_train.npy
+      limit_samples: 0          # 0 means use all samples
+      downsample_factor: 1      # 1 means no downsampling
+    model:
+      type: # Specify model type if needed, eg. "SimModel"
+      in_channels: # Fill as appropriate
+      out_dim: # Fill as appropriate
+      resize_hw: null
+      hidden: # optional specific for sim
+      dropout_rate: # If relevant
+      use_residual: # If relevant
+    hyperparameters:
+      learning_rate: 0.001
+      num_epochs: 700
+      batch_size: 16
+      input_length: 2500
+      seed: 2324235
+      l1_lambda: 1.0e-7
+      l2_lambda: 1.0e-7
+    training:
+      device: cuda:1
+      pretrained_path: models/layernorm/weights/model.pth
+      workers: 0
+      pin_memory: false
+    data_split:
+      train_ratio: 0.7
+      val_ratio: 0.15
+      test_ratio: 0.15
+    output:
+      model_filename: model_sim.pth
+      predictions_filename: y_pred_sim.npy
+      ground_truth_filename: y_true_sim.npy
+      evaluation_plots_dir: evaluation_plots_sim
+    logging:
+      verbose: true
+      print_every_n_epochs: 1
+      print_every_n_batches: 50
+
+  real:
+    dataset:
+      # base.base_dir からの相対パス（assets/datasets/experiments/dataset/nowall）
+      x_train: ${base.base_dir}/datasets/experiments/dataset/nowall/x_train_nowall.npy
+      t_train: ${base.base_dir}/datasets/experiments/dataset/nowall/t_train_nowall.npy
+      x_key: x_train_real
+      t_key: t_train_real
+      limit_samples: 0          # 0 means use all samples
+      downsample_factor: 1      # 1 means no downsampling
+    model:
+      type: SimpleCNNReal2D     # For 4D image data
+      in_channels: 2
+      out_dim: 6
+      resize_hw: null
+      dropout_rate: 0.2
+      use_residual: true
+      hidden: 32
+    training:
+      device: cuda:0
+      epochs: 100
+      batch_size: 8
+      learning_rate: 0.0001
+      workers: 0
+      pin_memory: false
+      seed: 42
+    data_split:
+      train_ratio: 0.7
+      val_ratio: 0.15
+      test_ratio: 0.15
+    output:
+      model_save_dir: /home/smatsubara/documents/airlift/assets/models_hub/real2real
+      model_filename: model_simplecnn_real.pth
+      predictions_filename: y_pred.npy
+      ground_truth_filename: y_true.npy
+      evaluation_plots_dir: evaluation_plots
+    logging:
+      verbose: true
+      print_every_n_epochs: 1
+      print_every_n_batches: 50
+
+eval:
+  sim:
+    target_variables_path: ${base.base_dir}/datasets/experiments/target_valiables.csv
+    device: cuda:0
+    tmp_path: /home/smatsubara/documents/airlift/data/tmp
+    results_path: /home/smatsubara/documents/airlift/data/results
+    create_plots: true
+    target_names:
+      - "Solid Velocity"
+      - "Gas Velocity" 
+      - "Liquid Velocity"
+      - "Solid Volume Fraction"
+      - "Gas Volume Fraction"
+      - "Liquid Volume Fraction"
+  real:
+    create_plots: true
+    target_names:
+      - "Solid Velocity"
+      - "Gas Velocity" 
+      - "Liquid Velocity"
+      - "Solid Volume Fraction"
+      - "Gas Volume Fraction"
+      - "Liquid Volume Fraction"
 
 hydra:
   run:
-    dir: /home/smatsubara/documents/airlift/data/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    # mode=real -> real2real, mode=sim -> sim2sim
+    dir: /home/smatsubara/documents/airlift/assets/models_hub/${mode}2${mode}/${now:%Y-%m-%d}/${now:%H-%M-%S}
   job:
     chdir: false

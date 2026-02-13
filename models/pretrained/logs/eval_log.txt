@@ -1,0 +1,544 @@
+[LOG] Logging all output to: /home/smatsubara/documents/airlift/source/ml_airlift/models/pretrained/logs/eval_log.txt
+shape: (5, 9)
+┌─────────┬──────┬─────────┬─────────┬───┬─────────┬────────┬────────┬────────┐
+│ 日付    ┆ 時分 ┆ 固相見  ┆ 気相見  ┆ … ┆ 固相体  ┆ 気相体 ┆ 液相体 ┆ ガラス │
+│ ---     ┆ ---  ┆ かけ流  ┆ かけ流  ┆   ┆ 積率    ┆ 積率   ┆ 積率   ┆ 球直径 │
+│ i64     ┆ i64  ┆ 速      ┆ 速      ┆   ┆ ---     ┆ ---    ┆ ---    ┆ ---    │
+│         ┆      ┆ ---     ┆ ---     ┆   ┆ f64     ┆ f64    ┆ f64    ┆ str    │
+│         ┆      ┆ f64     ┆ f64     ┆   ┆         ┆        ┆        ┆        │
+╞═════════╪══════╪═════════╪═════════╪═══╪═════════╪════════╪════════╪════════╡
+│ 2024072 ┆ 1022 ┆ 0.0     ┆ 31.9227 ┆ … ┆ 0.0     ┆ 0.7491 ┆ 0.2508 ┆ -      │
+│ 6       ┆      ┆         ┆ 55      ┆   ┆         ┆ 58     ┆ 42     ┆        │
+│ 2024072 ┆ 1055 ┆ 0.0     ┆ 32.6856 ┆ … ┆ 0.0     ┆ 0.7455 ┆ 0.2544 ┆ -      │
+│ 6       ┆      ┆         ┆ 36      ┆   ┆         ┆ 21     ┆ 79     ┆        │
+│ 2024072 ┆ 1113 ┆ 0.0     ┆ 32.0481 ┆ … ┆ 0.0     ┆ 0.7546 ┆ 0.2453 ┆ -      │
+│ 6       ┆      ┆         ┆ 31      ┆   ┆         ┆ 132    ┆ 868    ┆        │
+│ 2024072 ┆ 1122 ┆ 0.0     ┆ 31.9689 ┆ … ┆ 0.0     ┆ 0.7427 ┆ 0.2572 ┆ -      │
+│ 6       ┆      ┆         ┆ 82      ┆   ┆         ┆ 94     ┆ 06     ┆        │
+│ 2024072 ┆ 1334 ┆ 0.0     ┆ 32.8819 ┆ … ┆ 0.0     ┆ 0.7473 ┆ 0.2526 ┆ -      │
+│ 6       ┆      ┆         ┆ 76      ┆   ┆         ┆ 4      ┆ 6      ┆        │
+└─────────┴──────┴─────────┴─────────┴───┴─────────┴────────┴────────┴────────┘
+DEBUG: File exists: True
+DEBUG: loading successful and processing P20240726-1600_processed.npz..
+bandpass exec@max: 0.9784280464908532
+max: 0.6061357855796814
+(14000, 1, 2500)
+(1, 2500)
+DEBUG: saved x_debug_P20240726-1600_processed.npz.png
+loading successful and processing P20240726-1600_processed.npz..
+bandpass exec@max: 0.9784280464908532
+max: 0.6061357855796814
+mean: -0.007005955092608929, var: 6.425602623494342e-05
+loading successful and processing P20241004-1621_processed.npz..
+bandpass exec@max: 1.1313379267175518
+max: 0.6061357855796814
+mean: 0.09689034521579742, var: 0.0004593916528392583
+loading successful and processing P20241007-1054_processed.npz..
+bandpass exec@max: 1.1551058536341765
+max: 0.6061357855796814
+mean: 0.09964697062969208, var: 0.00033891588100232184
+loading successful and processing P20241007-1616_processed.npz..
+bandpass exec@max: 1.1259893784550004
+max: 0.6061357855796814
+mean: 0.0984572097659111, var: 0.0003683339455164969
+loading successful and processing P20241007-1607_processed.npz..
+bandpass exec@max: 1.1277808629141868
+max: 0.6061357855796814
+mean: 0.0987090915441513, var: 0.0003435641119722277
+loading successful and processing P20241007-1557_processed.npz..
+bandpass exec@max: 1.1253712757032044
+max: 0.6061357855796814
+mean: 0.1021517813205719, var: 0.0002671494730748236
+loading successful and processing P20241007-1547_processed.npz..
+bandpass exec@max: 1.1309772576638841
+max: 0.6061357855796814
+mean: 0.10463957488536835, var: 0.0001920729991979897
+loading successful and processing P20241007-1536_processed.npz..
+bandpass exec@max: 1.1304863001440026
+max: 0.6061357855796814
+mean: 0.09423133730888367, var: 0.0004565427079796791
+loading successful and processing P20241007-1526_processed.npz..
+bandpass exec@max: 1.1244228937825613
+max: 0.6061357855796814
+mean: 0.10531335324048996, var: 0.0002057660894934088
+loading successful and processing P20241007-1448_processed.npz..
+bandpass exec@max: 1.134074092169939
+max: 0.6061357855796814
+mean: 0.07715236395597458, var: 0.0008006674470379949
+loading successful and processing P20241007-1043_processed.npz..
+bandpass exec@max: 1.1663924570471098
+max: 0.6061357855796814
+mean: 0.09290663152933121, var: 0.0005121594294905663
+loading successful and processing P20241007-1429_processed.npz..
+bandpass exec@max: 1.1451111277155057
+max: 0.6061357855796814
+mean: 0.07744167000055313, var: 0.000790400430560112
+loading successful and processing P20241007-1013_processed.npz..
+bandpass exec@max: 1.1781632473445365
+max: 0.6061357855796814
+mean: 0.09370142221450806, var: 0.000428611267125234
+loading successful and processing P20241007-1112_processed.npz..
+bandpass exec@max: 1.1481002422617363
+max: 0.6061357855796814
+mean: 0.09757493436336517, var: 0.0003923109907191247
+loading successful and processing P20241007-1439_processed.npz..
+bandpass exec@max: 1.1391183880200957
+max: 0.6061357855796814
+mean: 0.0758059173822403, var: 0.000778672460000962
+loading successful and processing P20241007-1401_processed.npz..
+bandpass exec@max: 1.1407536431026823
+max: 0.6061357855796814
+mean: 0.07206830382347107, var: 0.0008745910599827766
+loading successful and processing P20241007-1419_processed.npz..
+bandpass exec@max: 1.142291123561812
+max: 0.6061357855796814
+mean: 0.08357884734869003, var: 0.0007144324481487274
+loading successful and processing P20241007-1123_processed.npz..
+bandpass exec@max: 1.142752645964189
+max: 0.6061357855796814
+mean: 0.07742395251989365, var: 0.0007513132877647877
+loading successful and processing P20241008-1026_processed.npz..
+bandpass exec@max: 1.2007607132583111
+max: 0.6061357855796814
+mean: 0.09830167144536972, var: 0.0003354471700731665
+loading successful and processing P20241008-1037_processed.npz..
+bandpass exec@max: 1.197681854661525
+max: 0.6061357855796814
+mean: 0.09711406379938126, var: 0.0003403198497835547
+loading successful and processing P20241008-1047_processed.npz..
+bandpass exec@max: 1.1954243989786995
+max: 0.6061357855796814
+mean: 0.09730462729930878, var: 0.0003447833878453821
+loading successful and processing P20241010-1437_processed.npz..
+bandpass exec@max: 1.2053788891234931
+max: 0.6061357855796814
+mean: 0.0703895315527916, var: 0.0010069566778838634
+loading successful and processing P20241010-1446_processed.npz..
+bandpass exec@max: 1.2014334010012666
+max: 0.6061357855796814
+mean: 0.07693852484226227, var: 0.0007746394257992506
+loading successful and processing P20241010-1415_processed.npz..
+bandpass exec@max: 1.2227624480798691
+max: 0.6061357855796814
+mean: 0.07873440533876419, var: 0.0008703302592039108
+loading successful and processing P20241010-1356_processed.npz..
+bandpass exec@max: 1.2332370161330566
+max: 0.6061357855796814
+mean: 0.09601100534200668, var: 0.0004786282079294324
+loading successful and processing P20241010-1427_processed.npz..
+bandpass exec@max: 1.2115093402141173
+max: 0.6061357855796814
+mean: 0.07886737585067749, var: 0.0008103153668344021
+loading successful and processing P20241011-1606_processed.npz..
+bandpass exec@max: 1.178672096020827
+max: 0.6061357855796814
+mean: 0.07731213420629501, var: 0.0008623100584372878
+loading successful and processing P20241011-1556_processed.npz..
+bandpass exec@max: 1.1862027594950209
+max: 0.6061357855796814
+mean: 0.08750490099191666, var: 0.0007256902754306793
+loading successful and processing P20241011-1546_processed.npz..
+bandpass exec@max: 1.1867567733560547
+max: 0.6061357855796814
+mean: 0.07567889243364334, var: 0.000966033258009702
+loading successful and processing P20241011-1534_processed.npz..
+bandpass exec@max: 1.1880820581358558
+max: 0.6061357855796814
+mean: 0.07257574051618576, var: 0.0010315047111362219
+loading successful and processing P20241011-1517_processed.npz..
+bandpass exec@max: 1.1907035251957037
+max: 0.6061357855796814
+mean: 0.029480405151844025, var: 0.0007727177580818534
+loading successful and processing P20241011-1132_processed.npz..
+bandpass exec@max: 1.195263589425632
+max: 0.6061357855796814
+mean: 0.03586685284972191, var: 0.0009120998438447714
+loading successful and processing P20241011-1123_processed.npz..
+bandpass exec@max: 1.19927052527485
+max: 0.6061357855796814
+mean: 0.03641670569777489, var: 0.0009583188220858574
+loading successful and processing P20241011-1106_processed.npz..
+bandpass exec@max: 1.2110947392363907
+max: 0.6061357855796814
+mean: 0.041330404579639435, var: 0.0009804674191400409
+loading successful and processing P20241011-1057_processed.npz..
+bandpass exec@max: 1.2229598314092303
+max: 0.6061357855796814
+mean: 0.09813415259122849, var: 0.00042475477675907314
+loading successful and processing P20241011-1115_processed.npz..
+bandpass exec@max: 1.2028492602907752
+max: 0.6061357855796814
+mean: 0.03987718001008034, var: 0.0008929789182730019
+loading successful and processing P20241011-1005_processed.npz..
+bandpass exec@max: 1.271721074889181
+max: 0.6061357855796814
+mean: 0.09079618006944656, var: 0.0004778454022016376
+loading successful and processing P20241011-1023_processed.npz..
+bandpass exec@max: 1.2498273089140217
+max: 0.6061357855796814
+mean: 0.10295332223176956, var: 0.00029713090043514967
+loading successful and processing P20241011-1031_processed.npz..
+bandpass exec@max: 1.243787933176753
+max: 0.6061357855796814
+mean: 0.10226572304964066, var: 0.0002624266198836267
+loading successful and processing P20241011-1040_processed.npz..
+bandpass exec@max: 1.2362055614233898
+max: 0.6061357855796814
+mean: 0.10182783007621765, var: 0.000320548249874264
+loading successful and processing P20241011-1048_processed.npz..
+bandpass exec@max: 1.2274611915953946
+max: 0.6061357855796814
+mean: 0.10232748091220856, var: 0.0003262857790105045
+DEBUG: File exists: True
+DEBUG: loading successful and processing P20241011-1015_processed.npz..
+bandpass exec@max: 1.2600505829318234
+max: 0.6061357855796814
+(14000, 1, 2500)
+(1, 2500)
+DEBUG: saved x_debug_P20241011-1015_processed.npz.png
+loading successful and processing P20241011-1015_processed.npz..
+bandpass exec@max: 1.2600505829318234
+max: 0.6061357855796814
+mean: 0.1030241921544075, var: 0.00024340311938431114
+loading successful and processing P20241015-1341_processed.npz..
+bandpass exec@max: 1.172880675384141
+max: 0.6061357855796814
+mean: 0.035195451229810715, var: 0.000856577476952225
+loading successful and processing P20241015-1332_processed.npz..
+bandpass exec@max: 1.1697214152054802
+max: 0.6061357855796814
+mean: 0.039212778210639954, var: 0.0008579902932979167
+loading successful and processing P20241015-1324_processed.npz..
+bandpass exec@max: 1.1679546372032057
+max: 0.6061357855796814
+mean: 0.04015995189547539, var: 0.0009135356522165239
+loading successful and processing P20241015-1123_processed.npz..
+bandpass exec@max: 1.1841734713350345
+max: 0.6061357855796814
+mean: 0.03656889125704765, var: 0.0009305634303018451
+loading successful and processing P20241015-1115_processed.npz..
+bandpass exec@max: 1.1882579404416638
+max: 0.6061357855796814
+mean: 0.03570390120148659, var: 0.001014928100630641
+loading successful and processing P20241015-1055_processed.npz..
+bandpass exec@max: 1.1981364619058898
+max: 0.6061357855796814
+mean: 0.04829177260398865, var: 0.001083302078768611
+loading successful and processing P20241015-1046_processed.npz..
+bandpass exec@max: 1.2031964833658355
+max: 0.6061357855796814
+mean: 0.04066619649529457, var: 0.0009469273500144482
+loading successful and processing P20241015-1037_processed.npz..
+bandpass exec@max: 1.2064590726178779
+max: 0.6061357855796814
+mean: 0.037789247930049896, var: 0.0009688130812719464
+loading successful and processing P20241015-1021_processed.npz..
+bandpass exec@max: 1.220491429352505
+max: 0.6061357855796814
+mean: 0.03613590821623802, var: 0.0010025228839367628
+loading successful and processing P20241015-1013_processed.npz..
+bandpass exec@max: 1.2277704289788147
+max: 0.6061357855796814
+mean: 0.042169760912656784, var: 0.0009428373305127025
+loading successful and processing P20241015-1000_processed.npz..
+bandpass exec@max: 1.229413186572354
+max: 0.6061357855796814
+mean: 0.03958544880151749, var: 0.0008901716209948063
+loading successful and processing P20241015-1104_processed.npz..
+bandpass exec@max: 1.1950695744820035
+max: 0.6061357855796814
+mean: 0.040918946266174316, var: 0.0010096683399751782
+loading successful and processing P20241015-1029_processed.npz..
+bandpass exec@max: 1.212059904252338
+max: 0.6061357855796814
+mean: 0.03979029133915901, var: 0.0010620485991239548
+loading successful and processing P20241015-1349_processed.npz..
+bandpass exec@max: 1.1722414596662258
+max: 0.6061357855796814
+mean: 0.032775748521089554, var: 0.000771996274124831
+loading successful and processing P20241015-1358_processed.npz..
+bandpass exec@max: 1.171066895886594
+max: 0.6061357855796814
+mean: 0.038336895406246185, var: 0.000855518679600209
+loading successful and processing P20241016-1041_processed.npz..
+bandpass exec@max: 1.2195668885942008
+max: 0.6061357855796814
+mean: 0.0858975276350975, var: 0.000706796592567116
+loading successful and processing P20241016-1616_processed.npz..
+bandpass exec@max: 1.1598132289478849
+max: 0.6061357855796814
+mean: 0.07322865724563599, var: 0.00098431296646595
+loading successful and processing P20241016-1608_processed.npz..
+bandpass exec@max: 1.160232659287743
+max: 0.6061357855796814
+mean: 0.07357022166252136, var: 0.0009609527187421918
+loading successful and processing P20241016-1559_processed.npz..
+bandpass exec@max: 1.1583029461725336
+max: 0.6061357855796814
+mean: 0.07492686808109283, var: 0.0009328561136499047
+loading successful and processing P20241016-1549_processed.npz..
+bandpass exec@max: 1.1604059934690292
+max: 0.6061357855796814
+mean: 0.07109080255031586, var: 0.0010124329710379243
+loading successful and processing P20241016-1539_processed.npz..
+bandpass exec@max: 1.1494424363612499
+max: 0.6061357855796814
+mean: 0.08525152504444122, var: 0.0007285152678377926
+loading successful and processing P20241016-1528_processed.npz..
+bandpass exec@max: 1.1536795289412956
+max: 0.6061357855796814
+mean: 0.09162966907024384, var: 0.0005155229009687901
+loading successful and processing P20241016-1450_processed.npz..
+bandpass exec@max: 1.1724349760189074
+max: 0.6061357855796814
+mean: 0.08829246461391449, var: 0.0006279540830291808
+loading successful and processing P20241016-1030_processed.npz..
+bandpass exec@max: 1.234359355333858
+max: 0.6061357855796814
+mean: 0.08213871717453003, var: 0.0008290513651445508
+loading successful and processing P20241016-1429_processed.npz..
+bandpass exec@max: 1.176413764426977
+max: 0.6061357855796814
+mean: 0.08857356756925583, var: 0.0006450122455134988
+loading successful and processing P20241016-1419_processed.npz..
+bandpass exec@max: 1.1823449180754835
+max: 0.6061357855796814
+mean: 0.0873221606016159, var: 0.0006856878171674907
+loading successful and processing P20241016-1358_processed.npz..
+bandpass exec@max: 1.1813599574889384
+max: 0.6061357855796814
+mean: 0.0915553942322731, var: 0.0004848195821978152
+loading successful and processing P20241016-1344_processed.npz..
+bandpass exec@max: 1.1785885550196507
+max: 0.6061357855796814
+mean: 0.08969473838806152, var: 0.0006144120125100017
+loading successful and processing P20241016-1334_processed.npz..
+bandpass exec@max: 1.1647270623100296
+max: 0.6061357855796814
+mean: 0.09173554182052612, var: 0.0005198058788664639
+loading successful and processing P20241016-1117_processed.npz..
+bandpass exec@max: 1.1886770877504607
+max: 0.6061357855796814
+mean: 0.08964154869318008, var: 0.000585326342843473
+loading successful and processing P20241016-1438_processed.npz..
+bandpass exec@max: 1.1734157129897715
+max: 0.6061357855796814
+mean: 0.09182379394769669, var: 0.0005175659316591918
+loading successful and processing P20241016-1057_processed.npz..
+bandpass exec@max: 1.2102265339424854
+max: 0.6061357855796814
+mean: 0.09028683602809906, var: 0.000500965747050941
+loading successful and processing P20241017-1619_processed.npz..
+bandpass exec@max: 1.1481741168066746
+max: 0.6061357855796814
+mean: 0.07015284150838852, var: 0.0010162440594285727
+loading successful and processing P20241017-1609_processed.npz..
+bandpass exec@max: 1.1607680553808273
+max: 0.6061357855796814
+mean: 0.06430705636739731, var: 0.001090796897187829
+loading successful and processing P20241017-1600_processed.npz..
+bandpass exec@max: 1.1530970450020708
+max: 0.6061357855796814
+mean: 0.04222152382135391, var: 0.0010849605314433575
+loading successful and processing P20241017-1543_processed.npz..
+bandpass exec@max: 1.1499617212046382
+max: 0.6061357855796814
+mean: 0.037042539566755295, var: 0.001077538589015603
+loading successful and processing P20241017-1535_processed.npz..
+bandpass exec@max: 1.1429071263622004
+max: 0.6061357855796814
+mean: 0.03640322759747505, var: 0.0011294515570625663
+loading successful and processing P20241017-1526_processed.npz..
+bandpass exec@max: 1.1369928546977313
+max: 0.6061357855796814
+mean: 0.039750635623931885, var: 0.0012065520277246833
+loading successful and processing P20241017-1357_processed.npz..
+bandpass exec@max: 1.1873884436689055
+max: 0.6061357855796814
+mean: 0.07383878529071808, var: 0.0009875282412394881
+loading successful and processing P20241017-1552_processed.npz..
+bandpass exec@max: 1.150585961855238
+max: 0.6061357855796814
+mean: 0.03878894820809364, var: 0.0010804170742630959
+loading successful and processing P20241017-1330_processed.npz..
+bandpass exec@max: 1.1891102635834832
+max: 0.6061357855796814
+mean: 0.0752558708190918, var: 0.0010189926251769066
+loading successful and processing P20241017-1340_processed.npz..
+bandpass exec@max: 1.189084963693503
+max: 0.6061357855796814
+mean: 0.07253604382276535, var: 0.0010020345216616988
+loading successful and processing P20241017-1003_processed.npz..
+bandpass exec@max: 1.2391178912031062
+max: 0.6061357855796814
+mean: 0.0665561705827713, var: 0.0012582633644342422
+loading successful and processing P20241017-1012_processed.npz..
+bandpass exec@max: 1.232100092936717
+max: 0.6061357855796814
+mean: 0.07078269869089127, var: 0.001106150564737618
+loading successful and processing P20241017-1349_processed.npz..
+bandpass exec@max: 1.1890583139199133
+max: 0.6061357855796814
+mean: 0.07698329538106918, var: 0.000919945421628654
+loading successful and processing P20241017-1039_processed.npz..
+bandpass exec@max: 1.2130079638947782
+max: 0.6061357855796814
+mean: 0.08526121079921722, var: 0.0007196522783488035
+loading successful and processing P20241017-1047_processed.npz..
+bandpass exec@max: 1.2095619708096206
+max: 0.6061357855796814
+mean: 0.08597341924905777, var: 0.0007420393521897495
+loading successful and processing P20241017-1108_processed.npz..
+bandpass exec@max: 1.1984024176378667
+max: 0.6061357855796814
+mean: 0.07096434384584427, var: 0.0011634047841653228
+loading successful and processing P20241017-1030_processed.npz..
+bandpass exec@max: 1.2189088613839725
+max: 0.6061357855796814
+mean: 0.08418197184801102, var: 0.0007458631880581379
+loading successful and processing P20241018-1612_processed.npz..
+bandpass exec@max: 1.1889528360467199
+max: 0.6061357855796814
+mean: 0.04435698688030243, var: 0.001183627638965845
+loading successful and processing P20241018-1603_processed.npz..
+bandpass exec@max: 1.185427107729607
+max: 0.6061357855796814
+mean: 0.051885541528463364, var: 0.0011669734958559275
+loading successful and processing P20241018-1554_processed.npz..
+bandpass exec@max: 1.1747170782429543
+max: 0.6061357855796814
+mean: 0.03913377597928047, var: 0.0010714121162891388
+loading successful and processing P20241018-1546_processed.npz..
+bandpass exec@max: 1.1796353546698577
+max: 0.6061357855796814
+mean: 0.03546186909079552, var: 0.0010316165862604976
+loading successful and processing P20241018-1530_processed.npz..
+bandpass exec@max: 1.1791044978311462
+max: 0.6061357855796814
+mean: 0.03841573745012283, var: 0.001037720125168562
+loading successful and processing P20241018-1440_processed.npz..
+bandpass exec@max: 1.202502838185374
+max: 0.6061357855796814
+mean: 0.03805918246507645, var: 0.0012558341259136796
+loading successful and processing P20241018-1433_processed.npz..
+bandpass exec@max: 1.212474760771539
+max: 0.6061357855796814
+mean: 0.036530718207359314, var: 0.0012384465662762523
+loading successful and processing P20241018-1425_processed.npz..
+bandpass exec@max: 1.2083463049311818
+max: 0.6061357855796814
+mean: 0.038263265043497086, var: 0.0012760076206177473
+loading successful and processing P20241018-1404_processed.npz..
+bandpass exec@max: 1.2264255970334803
+max: 0.6061357855796814
+mean: 0.06666555255651474, var: 0.0012272406602278352
+loading successful and processing P20241018-1353_processed.npz..
+bandpass exec@max: 1.2278969158441577
+max: 0.6061357855796814
+mean: 0.06617327779531479, var: 0.0012430819915607572
+loading successful and processing P20241018-1343_processed.npz..
+bandpass exec@max: 1.234877440658238
+max: 0.6061357855796814
+mean: 0.06564071029424667, var: 0.0012406106106936932
+loading successful and processing P20241018-1332_processed.npz..
+bandpass exec@max: 1.242570711865929
+max: 0.6061357855796814
+mean: 0.06823520362377167, var: 0.0012071160599589348
+loading successful and processing P20241018-1522_processed.npz..
+bandpass exec@max: 1.178192239171278
+max: 0.6061357855796814
+mean: 0.03858856111764908, var: 0.0009865700267255306
+loading successful and processing P20241018-1413_processed.npz..
+bandpass exec@max: 1.2147224968100216
+max: 0.6061357855796814
+mean: 0.06637032330036163, var: 0.0012100684689357877
+loading successful and processing P20241021-1016_processed.npz..
+bandpass exec@max: 1.3118303187166689
+max: 0.6061357855796814
+mean: 0.0656680017709732, var: 0.00038261638837866485
+loading successful and processing P20241021-1000_processed.npz..
+bandpass exec@max: 1.3326315214455784
+max: 0.6061357855796814
+mean: 0.0649339035153389, var: 0.0004002974892500788
+loading successful and processing P20241021-1008_processed.npz..
+bandpass exec@max: 1.3178977280352424
+max: 0.6061357855796814
+mean: 0.06770773977041245, var: 0.0004160480748396367
+Prediction results saved to /home/smatsubara/documents/airlift/source/ml_airlift/models/pretrained/predicted.csv.
+[INFO] Skipping Grad-CAM computation (--skip_gradcam flag set)
+shape: (5, 11)
+┌─────────┬─────────┬─────────┬─────────┬───┬─────────┬─────────┬──────┬──────┐
+│ 固相見  ┆ 気相見  ┆ 液相見  ┆ 固相体  ┆ … ┆ NAME    ┆ FullPat ┆ mean ┆ var  │
+│ かけ流  ┆ かけ流  ┆ かけ流  ┆ 積率    ┆   ┆ ---     ┆ h       ┆ ---  ┆ ---  │
+│ 速      ┆ 速      ┆ 速      ┆ ---     ┆   ┆ str     ┆ ---     ┆ f64  ┆ f64  │
+│ ---     ┆ ---     ┆ ---     ┆ f64     ┆   ┆         ┆ str     ┆      ┆      │
+│ f64     ┆ f64     ┆ f64     ┆         ┆   ┆         ┆         ┆      ┆      │
+╞═════════╪═════════╪═════════╪═════════╪═══╪═════════╪═════════╪══════╪══════╡
+│ 0.0     ┆ 31.9227 ┆ 6.05960 ┆ 0.0     ┆ … ┆ P202407 ┆ /home/s ┆ null ┆ null │
+│         ┆ 55      ┆ 1       ┆         ┆   ┆ 26-1022 ┆ matsuba ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ra/docu ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ments/a ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ir…     ┆      ┆      │
+│ 0.0     ┆ 32.6856 ┆ 6.10110 ┆ 0.0     ┆ … ┆ P202407 ┆ /home/s ┆ null ┆ null │
+│         ┆ 36      ┆ 1       ┆         ┆   ┆ 26-1055 ┆ matsuba ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ra/docu ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ments/a ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ir…     ┆      ┆      │
+│ 0.0     ┆ 32.0481 ┆ 4.54344 ┆ 0.0     ┆ … ┆ P202407 ┆ /home/s ┆ null ┆ null │
+│         ┆ 31      ┆ 5       ┆         ┆   ┆ 26-1113 ┆ matsuba ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ra/docu ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ments/a ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ir…     ┆      ┆      │
+│ 0.0     ┆ 31.9689 ┆ 4.55528 ┆ 0.0     ┆ … ┆ P202407 ┆ /home/s ┆ null ┆ null │
+│         ┆ 82      ┆ 6       ┆         ┆   ┆ 26-1122 ┆ matsuba ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ra/docu ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ments/a ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ir…     ┆      ┆      │
+│ 0.0     ┆ 32.8819 ┆ 3.11906 ┆ 0.0     ┆ … ┆ P202407 ┆ /home/s ┆ null ┆ null │
+│         ┆ 76      ┆ 6       ┆         ┆   ┆ 26-1334 ┆ matsuba ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ra/docu ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ments/a ┆      ┆      │
+│         ┆         ┆         ┆         ┆   ┆         ┆ ir…     ┆      ┆      │
+└─────────┴─────────┴─────────┴─────────┴───┴─────────┴─────────┴──────┴──────┘
+(359,)
+[-0.00700596  0.09689035  0.09964697  0.09845721  0.09870909  0.10215178
+  0.10463957  0.09423134  0.10531335  0.07715236  0.09290663  0.07744167
+  0.09370142  0.09757493  0.07580592  0.0720683   0.08357885  0.07742395
+  0.09830167  0.09711406  0.09730463  0.07038953  0.07693852  0.07873441
+  0.09601101  0.07886738  0.07731213  0.0875049   0.07567889  0.07257574
+  0.02948041  0.03586685  0.03641671  0.0413304   0.09813415  0.03987718
+  0.09079618  0.10295332  0.10226572  0.10182783  0.10232748  0.10302419
+  0.03519545  0.03921278  0.04015995  0.03656889  0.0357039   0.04829177
+  0.0406662   0.03778925  0.03613591  0.04216976  0.03958545  0.04091895
+  0.03979029  0.03277575  0.0383369   0.08589753  0.07322866  0.07357022
+  0.07492687  0.0710908   0.08525153  0.09162967  0.08829246  0.08213872
+  0.08857357  0.08732216  0.09155539  0.08969474  0.09173554  0.08964155
+  0.09182379  0.09028684  0.07015284  0.06430706  0.04222152  0.03704254
+  0.03640323  0.03975064  0.07383879  0.03878895  0.07525587  0.07253604
+  0.06655617  0.0707827   0.0769833   0.08526121  0.08597342  0.07096434
+  0.08418197  0.04435699  0.05188554  0.03913378  0.03546187  0.03841574
+  0.03805918  0.03653072  0.03826327  0.06666555  0.06617328  0.06564071
+  0.0682352   0.03858856  0.06637032  0.065668    0.0649339   0.06770774]
+Correlation coefficient between x and y: 0.8224
+RMSE between ground truth and prediction: 0.020338
+MAE between ground truth and prediction: 0.014206
+Relative Error between ground truth and prediction: 648.917321
+Relative Error between ground truth and prediction (stone): 1347.555259
+RMSE between ground truth and prediction (calibrated): 0.020663
+MAE between ground truth and prediction (calibrated): 0.015027
+Relative Error between ground truth and prediction (calibrated): 0.263015
+Relative Error between ground truth and prediction (calibrated) (stone): 0.327309
+saved all figures to  /home/smatsubara/documents/airlift/source/ml_airlift/models/pretrained
+
+============================================================
+RANGE-BASED EVALUATION: ground truth in [0.00, 0.10]
+============================================================
+  Samples : 84
+  RMSE    : 0.013983
+  MAE     : 0.011158
+  Bias    : +0.003825
+  RMSE (calibrated) : 0.017268
+  MAE  (calibrated) : 0.013948
+  Bias (calibrated) : +0.010831
+============================================================
+[LOG] Log saved to: /home/smatsubara/documents/airlift/source/ml_airlift/models/pretrained/logs/eval_log.txt

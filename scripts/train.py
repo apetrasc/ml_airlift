@@ -40,14 +40,41 @@ if not hasattr(hydra, "main"):
 from omegaconf import OmegaConf
 
 
-@hydra.main(config_path="../config", config_name="config_real.yaml", version_base=None)
+@hydra.main(config_path="../config", config_name="config.yaml", version_base=None)
 def main(cfg):
     """Main training function with Hydra configuration."""
-    
+    # Resolve config from config.yaml structure (train.{mode} + eval.{mode})
+    mode = cfg.get("mode", "real")
+    active = cfg.train[mode]
+    eval_cfg = cfg.eval[mode]
+
+    # Build flat cfg for compatibility with rest of script
+    # base を含め ${base.base_dir} のパス補間が正しく動くようにする
+    cfg = OmegaConf.create({
+        "base": cfg.get("base", {}),
+        "dataset": active.dataset,
+        "model": active.model,
+        "data_split": active.data_split,
+        "output": active.output,
+        "logging": active.logging,
+        "evaluation": eval_cfg,
+    })
+    # Merge training: sim has hyperparameters + training, real has training only
+    if mode == "sim" and "hyperparameters" in active:
+        hp = active.hyperparameters
+        cfg.training = OmegaConf.merge(active.training, {
+            "epochs": hp.get("num_epochs", 700),
+            "batch_size": hp.get("batch_size", 16),
+            "learning_rate": hp.get("learning_rate", 0.001),
+            "seed": hp.get("seed", 2324235),
+        })
+    else:
+        cfg.training = active.training
+
     # Prevent Hydra from creating output directories in sandbox/ml_airlift
     script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sandbox_dir = script_dir
-    
+
     # Check and remove Hydra-created output directories
     outputs_dir = os.path.join(sandbox_dir, "outputs")
     if os.path.exists(outputs_dir):
@@ -103,7 +130,9 @@ def main(cfg):
     
     # Load data
     print("[STEP] Loading dataset files...")
-    x, t = load_npz_pair(cfg.dataset.x_train, cfg.dataset.t_train, cfg.dataset.x_key, cfg.dataset.t_key)
+    x_key = OmegaConf.select(cfg.dataset, "x_key", default=None)
+    t_key = OmegaConf.select(cfg.dataset, "t_key", default=None)
+    x, t = load_npz_pair(cfg.dataset.x_train, cfg.dataset.t_train, x_key, t_key)
     print(f"[OK] Loaded. x.shape={x.shape}, t.shape={t.shape} (elapsed {time.time()-t0:.2f}s)")
     
     # Exclude Channel 1 and Channel 3 (keep only channels 0, 2)

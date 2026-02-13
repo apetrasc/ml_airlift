@@ -53,13 +53,15 @@ class GradCAM2D:
         self.hook_handles.append(self.target_layer.register_forward_hook(forward_hook))
         self.hook_handles.append(self.target_layer.register_full_backward_hook(backward_hook))
     
-    def __call__(self, input_tensor, output_idx=None):
+    def __call__(self, input_tensor, output_idx=None, signed=False):
         """
         Compute Grad-CAM map for the provided input tensor.
         
         Args:
             input_tensor: Input tensor of shape [B, C, H, W]
             output_idx: Index of output dimension to compute Grad-CAM for (None = sum of all outputs)
+            signed: If True, do not apply ReLU; normalize to [-1, 1] (red=positive, blue=negative).
+                    If False, apply ReLU and normalize to [0, 1] (magnitude only).
         
         Returns:
             Grad-CAM map as numpy array of shape [H, W]
@@ -88,9 +90,10 @@ class GradCAM2D:
         # Compute weights: global average pooling of gradients
         weights = gradients.mean(dim=(2, 3), keepdim=True)  # [B, C, 1, 1]
         
-        # Compute Grad-CAM: weighted sum of activations
+        # Compute Grad-CAM: weighted sum of activations (can be positive or negative)
         grad_cam_map = (weights * activations).sum(dim=1, keepdim=True)  # [B, 1, H, W]
-        grad_cam_map = torch.relu(grad_cam_map)
+        if not signed:
+            grad_cam_map = torch.relu(grad_cam_map)
         
         # Interpolate to input size if needed
         if grad_cam_map.shape[2:] != input_tensor.shape[2:]:
@@ -103,9 +106,17 @@ class GradCAM2D:
         
         grad_cam_map = grad_cam_map.squeeze().cpu().numpy()
         
-        # Normalize to [0, 1]
-        if grad_cam_map.max() > grad_cam_map.min():
-            grad_cam_map = (grad_cam_map - grad_cam_map.min()) / (grad_cam_map.max() - grad_cam_map.min() + 1e-8)
+        if signed:
+            # Normalize to [-1, 1] symmetric (0 = no effect; red = positive, blue = negative)
+            vmax = np.abs(grad_cam_map).max()
+            if vmax > 1e-8:
+                grad_cam_map = grad_cam_map / vmax
+            else:
+                grad_cam_map = np.zeros_like(grad_cam_map)
+        else:
+            # Normalize to [0, 1]
+            if grad_cam_map.max() > grad_cam_map.min():
+                grad_cam_map = (grad_cam_map - grad_cam_map.min()) / (grad_cam_map.max() - grad_cam_map.min() + 1e-8)
         
         return grad_cam_map
     
@@ -216,6 +227,68 @@ def visualize_sample_gradcam(input_tensor, gradcam_map, target_name, save_path,
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"Saved: {save_path}")
+
+
+def visualize_sample_posneg_gradcam(input_tensor, gradcam_signed_map, target_name, save_path,
+                                     sample_idx, target_value=None, pred_value=None):
+    """
+    Visualize sample image, signed Grad-CAM (pos-neg), and overlay.
+    Red = positive contribution (increase in value here -> increase output),
+    Blue = negative contribution (increase in value here -> decrease output).
+    """
+    x_numpy = input_tensor[0].cpu().numpy()
+    hilbert_images = []
+    for c in range(x_numpy.shape[0]):
+        hilbert_channel = np.zeros((x_numpy.shape[1], x_numpy.shape[2]))
+        for h in range(x_numpy.shape[1]):
+            hilbert_signal = hilbert(x_numpy[c, h, :])
+            hilbert_channel[h, :] = np.abs(hilbert_signal)
+        hilbert_images.append(hilbert_channel)
+    sample_image_raw = hilbert_images[0]
+    max_val = sample_image_raw.max()
+    if max_val > 0:
+        sample_image_normalized = sample_image_raw / max_val
+    else:
+        sample_image_normalized = sample_image_raw
+    sample_image = np.log1p(sample_image_normalized)
+
+    fig = plt.figure(figsize=(18, 6))
+    gs = GridSpec(1, 3, figure=fig, width_ratios=[1, 1, 1], wspace=0.3)
+
+    title_suffix = ""
+    if target_value is not None and pred_value is not None:
+        error = abs(target_value - pred_value)
+        title_suffix = f"\nTarget: {target_value:.4f} | Pred: {pred_value:.4f} | Error: {error:.4f}"
+    elif pred_value is not None:
+        title_suffix = f"\nPred: {pred_value:.4f}"
+    elif target_value is not None:
+        title_suffix = f"\nTarget: {target_value:.4f}"
+
+    ax_sample = fig.add_subplot(gs[0, 0])
+    im_sample = ax_sample.imshow(sample_image, cmap='jet', aspect='auto', vmin=0.01, vmax=0.5)
+    ax_sample.set_title(f'Sample {sample_idx} | {target_name}{title_suffix}', fontsize=12)
+    ax_sample.axis('off')
+    plt.colorbar(im_sample, ax=ax_sample, fraction=0.046, pad=0.04)
+
+    # Signed heatmap: RdBu_r -> red = positive, blue = negative, white = 0
+    ax_signed = fig.add_subplot(gs[0, 1])
+    im_signed = ax_signed.imshow(gradcam_signed_map, cmap='RdBu_r', aspect='auto', vmin=-1, vmax=1)
+    ax_signed.set_title(f'Pos-Neg Grad-CAM\nRed=+ | Blue=- | Sample {sample_idx}', fontsize=12)
+    ax_signed.axis('off')
+    cbar = plt.colorbar(im_signed, ax=ax_signed, fraction=0.046, pad=0.04)
+    cbar.set_label('Contribution sign', fontsize=10)
+
+    ax_overlay = fig.add_subplot(gs[0, 2])
+    ax_overlay.imshow(sample_image, cmap='gray', aspect='auto', alpha=0.6)
+    im_overlay = ax_overlay.imshow(gradcam_signed_map, cmap='RdBu_r', alpha=0.6, aspect='auto', vmin=-1, vmax=1)
+    ax_overlay.set_title(f'Overlay (signed)\nSample {sample_idx} | {target_name}', fontsize=12)
+    ax_overlay.axis('off')
+    plt.colorbar(im_overlay, ax=ax_overlay, fraction=0.046, pad=0.04)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved (pos-neg): {save_path}")
 
 
 def main():
@@ -333,7 +406,7 @@ def main():
     
     print(f"[INFO] Output indices: {output_indices}")
     
-    # Create output directories
+    # Create output directories: CAMS (magnitude only) and pos-negCAM (signed)
     base_output_dir = trial_dir / "logs" / "CAMS"
     output_dirs = {
         'gas_velocity': base_output_dir / "gas_velocity",
@@ -341,8 +414,14 @@ def main():
         'liquid_volume_fraction': base_output_dir / "liquid_volume_fraction",
         'solid_volume_fraction': base_output_dir / "solid_volume_fraction"
     }
-    
-    for dir_path in output_dirs.values():
+    base_output_dir_posneg = trial_dir / "logs" / "pos-negCAM"
+    output_dirs_posneg = {
+        'gas_velocity': base_output_dir_posneg / "gas_velocity",
+        'gas_volume_fraction': base_output_dir_posneg / "gas_volume_fraction",
+        'liquid_volume_fraction': base_output_dir_posneg / "liquid_volume_fraction",
+        'solid_volume_fraction': base_output_dir_posneg / "solid_volume_fraction"
+    }
+    for dir_path in list(output_dirs.values()) + list(output_dirs_posneg.values()):
         dir_path.mkdir(parents=True, exist_ok=True)
     
     # Determine number of samples to process
@@ -383,16 +462,27 @@ def main():
             target_val = target_sample[output_idx].item() if target_sample is not None else None
             pred_val = pred[output_idx]
             
-            # Compute Grad-CAM
-            gradcam_map = gradcam(input_sample, output_idx=output_idx)
-            
-            # Save visualization
+            # Compute Grad-CAM (magnitude only, for CAMS)
+            gradcam_map = gradcam(input_sample, output_idx=output_idx, signed=False)
             save_path = output_dir / f"sample{sample_idx:04d}_output{output_idx}.png"
             visualize_sample_gradcam(
                 input_sample.cpu(),
                 gradcam_map,
                 target_name,
                 save_path,
+                sample_idx=sample_idx,
+                target_value=target_val,
+                pred_value=pred_val
+            )
+            # Compute signed Grad-CAM (pos-neg) and save to pos-negCAM
+            gradcam_signed_map = gradcam(input_sample, output_idx=output_idx, signed=True)
+            output_dir_posneg = output_dirs_posneg[target_key]
+            save_path_posneg = output_dir_posneg / f"sample{sample_idx:04d}_output{output_idx}.png"
+            visualize_sample_posneg_gradcam(
+                input_sample.cpu(),
+                gradcam_signed_map,
+                target_name,
+                save_path_posneg,
                 sample_idx=sample_idx,
                 target_value=target_val,
                 pred_value=pred_val
@@ -410,8 +500,12 @@ def main():
     
     print(f"\n✅ Grad-CAM visualization complete!")
     print(f"Results saved to:")
+    print(f"  CAMS (magnitude only):")
     for target_key, dir_path in output_dirs.items():
-        print(f"  - {target_key}: {dir_path}")
+        print(f"    - {target_key}: {dir_path}")
+    print(f"  pos-negCAM (signed: red=+, blue=-):")
+    for target_key, dir_path in output_dirs_posneg.items():
+        print(f"    - {target_key}: {dir_path}")
 
 
 if __name__ == "__main__":

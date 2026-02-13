@@ -81,7 +81,7 @@ def prepare_cnn_input(x_processed, device):
     x_tensor = x_tensor.unsqueeze(1)
 
     # Normalize each (length) column for each sample in the batch
-    c = 1.0
+    c=1.2
     max_values_per_column = torch.max(x_tensor, dim=2, keepdim=True)[0]
     max_values_per_column[max_values_per_column == 0] = 1.0  # Prevent division by zero
     x_tensor = x_tensor / (max_values_per_column * c)
@@ -281,10 +281,13 @@ def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=5.0,
         #plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0]*1e6, t[-1]*1e6, img_data.shape[0]-0.5, -0.5],vmin=0,vmax=1)
         plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0]*1e6, t[-1]*1e6, img_data.shape[0]-0.5, -0.5],vmin=vmin,vmax=vmax)
         #plt.imshow(img_data, aspect='auto', cmap='viridis', extent=[t[0], t[-1], img_data.shape[0]-0.5, -0.5])
-        plt.colorbar(label='Amplitude')
-        plt.xlabel('Time (μs)')
-        plt.ylabel('Pulse Number')
-        plt.title('All Pulses (Channel {})'.format(channel_index))
+        cbar = plt.colorbar(label='Amplitude')
+        cbar.ax.tick_params(labelsize=16)
+        cbar.set_label('Amplitude', fontsize=18)
+        plt.xlabel('Time (μs)', fontsize=18)
+        plt.ylabel('Pulse Number', fontsize=18)
+        plt.title('All Pulses (Channel {})'.format(channel_index), fontsize=20)
+        plt.tick_params(axis='both', which='major', labelsize=16)
         plt.tight_layout()
         import os
         base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -323,10 +326,11 @@ def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=5.0,
         plt.figure(figsize=(10, 4))
         plt.plot(t*1e6, analytic_pulse, color='red', label='Envelope')
         plt.plot(t*1e6, pulse, color='blue', label='Original Pulse')
-        plt.legend()
-        plt.xlabel('Time (μs)')
-        plt.ylabel('Amplitude')
-        plt.title('Pulse {} (Channel {})'.format(pulse_index, channel_index))
+        plt.legend(fontsize=16)
+        plt.xlabel('Time (μs)', fontsize=18)
+        plt.ylabel('Amplitude', fontsize=18)
+        plt.title('Pulse {} (Channel {})'.format(pulse_index, channel_index), fontsize=20)
+        plt.tick_params(axis='both', which='major', labelsize=16)
         plt.tight_layout()
         import os
         #base = os.path.dirname(save_path)
@@ -337,16 +341,14 @@ def npz2png(file_path, save_path, channel_index=0, start_time=0.0, end_time=5.0,
         plt.savefig(new_save_path)
         plt.close()
 
-def debug_pipeline(base_dir, config_path, file_path):
+def debug_pipeline(base_dir, config, file_path):
     """
     Load processed data from a .npz file, preprocess it, plot a specific slice, and save the plot as an image.
     Args:
-        config_path (str): Path to the YAML configuration file.
+        base_dir (str): Base output directory.
+        config (dict): Resolved config with 'evaluation' key (e.g. config['evaluation']['device']).
         file_path (str): Path to the processed .npz file.
     """
-    # Load configuration from YAML file
-    config = yaml.safe_load(open(config_path))
-
     # Check if the file exists
     print("DEBUG: File exists:", os.path.exists(file_path))
 
